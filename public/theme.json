@@ -1,0 +1,40 @@
+{
+  "custom_fonts": [
+    "https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+  ],
+  "variables": {
+    "dark": {
+      "--font-sans": "'Inter', system-ui, sans-serif",
+      "--font-mono": "'JetBrains Mono', monospace",
+      "--background": "240 20% 5%",
+      "--foreground": "40 20% 93%",
+      "--card": "240 15% 8%",
+      "--card-foreground": "40 20% 93%",
+      "--popover": "240 15% 8%",
+      "--popover-foreground": "40 20% 93%",
+      "--primary": "43 65% 55%",
+      "--primary-foreground": "240 20% 5%",
+      "--secondary": "240 10% 12%",
+      "--secondary-foreground": "40 20% 93%",
+      "--muted": "240 10% 15%",
+      "--muted-foreground": "40 10% 55%",
+      "--accent": "240 10% 15%",
+      "--accent-foreground": "40 20% 93%",
+      "--destructive": "0 62% 35%",
+      "--destructive-foreground": "40 20% 93%",
+      "--border": "240 10% 14%",
+      "--input": "240 10% 12%",
+      "--ring": "43 65% 55%",
+      "--radius": "0.75rem",
+      "--sidebar-background": "240 20% 4%",
+      "--sidebar-foreground": "40 10% 70%",
+      "--sidebar-primary": "43 65% 55%",
+      "--sidebar-primary-foreground": "240 20% 5%",
+      "--sidebar-accent": "240 10% 8%",
+      "--sidebar-accent-foreground": "40 20% 93%",
+      "--sidebar-border": "240 10% 12%",
+      "--sidebar-ring": "43 65% 55%"
+    }
+  }
+}
+

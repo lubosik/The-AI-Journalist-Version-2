@@ -1,0 +1,36 @@
+@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap");
+
+[class*="step-"] {
+  border-left: 2px solid hsl(var(--primary) / 0.4) !important;
+  margin: 4px 0 !important;
+  padding-left: 12px !important;
+  font-family: "JetBrains Mono", monospace !important;
+  font-size: 12px !important;
+}
+
+[class*="message"] p {
+  font-size: 15px !important;
+  line-height: 1.7 !important;
+}
+
+pre,
+code {
+  font-family: "JetBrains Mono", monospace !important;
+  font-size: 13px !important;
+}
+
+#root {
+  animation: fade-in 0.3s ease-in-out;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+[class*="action"] button {
+  font-family: "Inter", sans-serif !important;
+  font-weight: 500 !important;
+  transition: all 0.15s ease !important;
+}
+

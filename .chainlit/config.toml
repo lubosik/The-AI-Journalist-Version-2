@@ -1,0 +1,38 @@
+[project]
+name = "HERALD"
+enable_telemetry = false
+user_env = []
+session_timeout = 86400
+cache = false
+
+[features]
+unsafe_allow_html = false
+latex = false
+user_message_autoscroll = true
+auto_tag_thread = true
+edit_message = true
+allow_thread_sharing = false
+
+[features.spontaneous_file_upload]
+enabled = true
+accept = ["image/*", "application/pdf", "text/plain", "text/html"]
+max_files = 5
+max_size_mb = 50
+
+[features.audio]
+enabled = false
+
+[UI]
+name = "HERALD"
+description = "VC Secondaries Intelligence"
+cot = "tool_call"
+default_theme = "dark"
+layout = "wide"
+custom_css = "/public/herald.css"
+custom_js = "/public/herald.js"
+alert_style = "modern"
+confirm_new_chat = false
+
+[meta]
+generated_by = "HERALD v2"
+

@@ -1,0 +1,14 @@
+.env
+__pycache__/
+*.py[cod]
+.chainlit/translations/
+.files/
+*.log
+.DS_Store
+node_modules/
+.venv/
+venv/
+.python-packages/
+*.egg-info/
+dist/
+build/

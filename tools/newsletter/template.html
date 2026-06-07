@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HERALD — The Secondaries Intelligence Report | Design Reference</title>
+  <!--
+    HERALD Newsletter — Design Reference Template
+    =============================================
+    This file documents the visual design of the newsletter.
+    It is NOT used programmatically. The builder.py module generates
+    the live HTML dynamically from structured section data.
+
+    Design System:
+      Background:        #ffffff
+      Primary text:      #1a1a2e  (near-black navy)
+      Accent:            #c9a84c  (gold)
+      Secondary / navy:  #2d5a8e
+      Muted text:        #6b7280
+      Alt row:           #f8f6f0
+      Font (body):       Georgia, 'Times New Roman', serif
+      Font (UI/labels):  Arial, Helvetica, sans-serif
+      Max width:         680px
+      Dividers:          1px solid #c9a84c
+  -->
+</head>
+<body style="margin:0;padding:0;background:#f4f1eb;font-family:Georgia,'Times New Roman',serif;">
+
+<!-- ================================================================
+     EMAIL WRAPPER — outermost background
+     ================================================================ -->
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+       style="background:#f4f1eb;padding:24px 0;">
+  <tr>
+    <td align="center">
+
+
+      <!-- ============================================================
+           SECTION 1 — HEADER / MASTHEAD
+           ============================================================ -->
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+             width="680" style="max-width:680px;width:100%;background:#1a1a2e;">
+        <tr>
+          <td style="padding:32px 24px 28px 24px;text-align:center;">
+
+            <!-- Optional header image (omitted when not provided) -->
+            <!--
+            <img src="https://cdn.example.com/herald-banner.png" alt="HERALD"
+                 style="display:block;margin:0 auto 20px auto;max-width:100%;height:auto;" />
+            -->
+
+            <!-- Publication label -->
+            <p style="margin:0 0 4px 0;font-family:Arial,Helvetica,sans-serif;
+                       font-size:11px;letter-spacing:4px;text-transform:uppercase;
+                       color:#c9a84c;">
+              HERALD
+            </p>
+
+            <!-- Full title -->
+            <h1 style="margin:0 0 8px 0;font-family:Georgia,'Times New Roman',serif;
+                        font-size:38px;font-weight:normal;color:#ffffff;letter-spacing:1px;">
+              The Secondaries Intelligence Report
+            </h1>
+
+            <!-- Issue + date line -->
+            <p style="margin:0 0 20px 0;font-family:Arial,Helvetica,sans-serif;
+                       font-size:11px;letter-spacing:3px;text-transform:uppercase;
+                       color:#c9a84c;">
+              Issue #1 &nbsp;|&nbsp; April 21–27, 2026
+            </p>
+
+            <!-- Gold rule -->
+            <div style="width:60px;height:2px;background:#c9a84c;margin:0 auto 20px auto;"></div>
+
+            <!-- Subject / issue headline (italic, lighter) -->
+            <p style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:18px;
+                       font-style:italic;color:#f8f6f0;line-height:1.5;">
+              GP-led volumes near record highs as LPs accelerate liquidity seeks heading into Q3.
+            </p>
+
+          </td>
+        </tr>
+      </table>
+      <!-- /HEADER -->
+
+
+      <!-- ============================================================
+           SECTION 2 — TABLE OF CONTENTS
+           ============================================================ -->
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+             width="680" style="max-width:680px;width:100%;background:#ffffff;">
+        <tr>
+          <td style="padding:24px 24px 16px 24px;">
+
+            <p style="margin:0 0 12px 0;font-family:Arial,Helvetica,sans-serif;font-size:10px;
+                       letter-spacing:3px;text-transform:uppercase;color:#c9a84c;">
+              IN THIS ISSUE
+            </p>
+
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+              <tr style="background:#ffffff;">
+                <td style="padding:8px 12px;font-family:Georgia,'Times New Roman',serif;
+                           font-size:14px;color:#6b7280;width:36px;">01.</td>
+                <td style="padding:8px 4px 8px 0;font-family:Georgia,'Times New Roman',serif;
+                           font-size:14px;">
+                  <a href="#lead" style="color:#1a1a2e;text-decoration:none;border-bottom:1px solid #c9a84c;">
+                    The Lead — Weekly Intelligence Brief
+                  </a>
+                </td>
+              </tr>
+              <tr style="background:#f8f6f0;">
+                <td style="padding:8px 12px;font-family:Georgia,'Times New Roman',serif;
+                           font-size:14px;color:#6b7280;">02.</td>
+                <td style="padding:8px 4px 8px 0;font-family:Georgia,'Times New Roman',serif;
+                           font-size:14px;">
+                  <a href="#market_pulse" style="color:#1a1a2e;text-decoration:none;border-bottom:1px solid #c9a84c;">
+                    Market Pulse
+                  </a>
+                </td>
+              </tr>
+              <tr style="background:#ffffff;">
+                <td style="padding:8px 12px;font-family:Georgia,'Times New Roman',serif;
+                           font-size:14px;color:#6b7280;">03.</td>
+                <td style="padding:8px 4px 8px 0;font-family:Georgia,'Times New Roman',serif;
+                           font-size:14px;">
+                  <a href="#angle" style="color:#1a1a2e;text-decoration:none;border-bottom:1px solid #c9a84c;">
+                    The Angle — Structural Insight
+                  </a>
+                </td>
+              </tr>
+              <tr style="background:#f8f6f0;">
+                <td style="padding:8px 12px;font-family:Georgia,'Times New Roman',serif;
+                           font-size:14px;color:#6b7280;">04.</td>
+                <td style="padding:8px 4px 8px 0;font-family:Georgia,'Times New Roman',serif;
+                           font-size:14px;">
+                  <a href="#deal_watch" style="color:#1a1a2e;text-decoration:none;border-bottom:1px solid #c9a84c;">
+                    Deal Watch
+                  </a>
+                </td>
+              </tr>
+              <tr style="background:#ffffff;">
+                <td style="padding:8px 12px;font-family:Georgia,'Times New Roman',serif;
+                           font-size:14px;color:#6b7280;">05.</td>
+                <td style="padding:8px 4px 8px 0;font-family:Georgia,'Times New Roman',serif;
+                           font-size:14px;">
+                  <a href="#doms_deals" style="color:#1a1a2e;text-decoration:none;border-bottom:1px solid #c9a84c;">
+                    Dom's Deals — Hand-Picked Opportunities
+                  </a>
+                </td>
+              </tr>
+            </table>
+
+            <!-- Contents bottom divider -->
+            <div style="height:1px;background:#c9a84c;margin:16px 0 0 0;"></div>
+
+          </td>
+        </tr>
+      </table>
+      <!-- /TABLE OF CONTENTS -->
+
+
+      <!-- ============================================================
+           SECTION 3 — THE LEAD
+           ============================================================ -->
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+             width="680" style="max-width:680px;width:100%;background:#ffffff;">
+        <tr>
+          <td style="padding:32px 24px;">
+
+            <!-- Anchor -->
+            <a name="lead" id="lead" style="display:block;"></a>
+
+            <!-- Section label -->
+            <p style="margin:0 0 4px 0;font-family:Arial,Helvetica,sans-serif;font-size:10px;
+                       letter-spacing:3px;text-transform:uppercase;color:#c9a84c;">
+              THE LEAD
+            </p>
+
+            <!-- Gold rule -->
+            <div style="height:1px;background:#c9a84c;margin:0 0 20px 0;"></div>
+
+            <p style="margin:0 0 16px 0;font-family:Georgia,'Times New Roman',serif;
+                       font-size:16px;line-height:1.7;color:#1a1a2e;">
+              The VC secondaries market is entering its most active stretch of the decade.
+              GP-led transactions topped $52 billion in Q1 2026, according to multiple LP
+              sources — a figure that rivals full-year volumes from as recently as 2022.
+              The driver is structural: primary fund deployment has slowed, DPI pressure
+              from institutional LPs is mounting, and a cohort of 2018–2021 vintage funds
+              are now staring down asset marks that look increasingly stale.
+            </p>
+
+            <p style="margin:0 0 16px 0;font-family:Georgia,'Times New Roman',serif;
+                       font-size:16px;line-height:1.7;color:#1a1a2e;">
+              Three themes dominated the conversation this week. First, Sequoia's reported
+              tender offer for Stripe secondary positions — rumoured at a 15% discount to
+              last primary round — drew considerable commentary on pricing discipline in
+              a compressed exit environment. Second, a clutch of European family offices
+              are reportedly building LP interest portfolios at scale, signalling that
+              the denominator effect is not finished unwinding. Third, the emergence of
+              AI-native secondaries platforms is beginning to disintermediate traditional
+              placement agents on smaller, sub-$50M ticket sizes.
+            </p>
+
+            <p style="margin:0;font-family:Georgia,'Times New Roman',serif;
+                       font-size:16px;line-height:1.7;color:#1a1a2e;">
+              The full picture is messier than headlines suggest. We dig in below.
+            </p>
+
+          </td>
+        </tr>
+      </table>
+      <!-- /THE LEAD -->
+
+
+      <!-- ============================================================
+           VISUAL INSERT — Chart after section 2 (Market Pulse)
+           ============================================================ -->
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+             width="680" style="max-width:680px;width:100%;background:#ffffff;">
+        <tr>
+          <td style="padding:24px 24px;text-align:center;">
+            <!-- Placeholder image — replace with actual chart URL -->
+            <img src="https://placehold.co/632x320/1a1a2e/c9a84c?text=Market+Pulse+Chart"
+                 alt="Market Pulse Chart"
+                 style="display:block;max-width:100%;height:auto;margin:0 auto;
+                        border:1px solid #e8e4dc;" />
+            <p style="margin:10px 0 0 0;font-family:Arial,Helvetica,sans-serif;font-size:11px;
+                       color:#6b7280;font-style:italic;text-align:center;">
+              GP-led secondary volume by quarter, 2023–2026. Source: Herald Intelligence.
+            </p>
+          </td>
+        </tr>
+      </table>
+      <!-- /VISUAL INSERT -->
+
+
+      <!-- ============================================================
+           SECTION 4 — MARKET PULSE
+           ============================================================ -->
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+             width="680" style="max-width:680px;width:100%;background:#f8f6f0;">
+        <tr>
+          <td style="padding:32px 24px;">
+
+            <a name="market_pulse" id="market_pulse" style="display:block;"></a>
+
+            <p style="margin:0 0 4px 0;font-family:Arial,Helvetica,sans-serif;font-size:10px;
+                       letter-spacing:3px;text-transform:uppercase;color:#c9a84c;">
+              MARKET PULSE
+            </p>
+            <div style="height:1px;background:#c9a84c;margin:0 0 20px 0;"></div>
+
+            <p style="margin:0 0 16px 0;font-family:Georgia,'Times New Roman',serif;
+                       font-size:16px;line-height:1.7;color:#1a1a2e;">
+              Bid-ask spreads on LP interest in top-quartile 2020 vintage funds have
+              compressed by approximately 400bps over the past six months, according to
+              secondary market participants. Demand from sovereign wealth funds and pension
+              systems in the Gulf and Southeast Asia continues to outpace supply in the
+              quality tier.
+            </p>
+
+            <p style="margin:0;font-family:Georgia,'Times New Roman',serif;
+                       font-size:16px;line-height:1.7;color:#1a1a2e;">
+              Mid-market, however, tells a different story. Funds below $500M AUM face
+              discounts averaging 22% to NAV on LP interest transfers, with longer time
+              to close and greater dependence on regional broker networks. The bifurcation
+              is sharpening.
+            </p>
+
+          </td>
+        </tr>
+      </table>
+      <!-- /MARKET PULSE -->
+
+
+      <!-- ============================================================
+           SECTION 5 — THE ANGLE
+           ============================================================ -->
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+             width="680" style="max-width:680px;width:100%;background:#ffffff;">
+        <tr>
+          <td style="padding:32px 24px;">
+
+            <a name="angle" id="angle" style="display:block;"></a>
+
+            <p style="margin:0 0 4px 0;font-family:Arial,Helvetica,sans-serif;font-size:10px;
+                       letter-spacing:3px;text-transform:uppercase;color:#c9a84c;">
+              THE ANGLE
+            </p>
+            <div style="height:1px;background:#c9a84c;margin:0 0 20px 0;"></div>
+
+            <p style="margin:0 0 16px 0;font-family:Georgia,'Times New Roman',serif;
+                       font-size:16px;line-height:1.7;color:#1a1a2e;">
+              The most underreported structural story in secondaries right now is the
+              rise of NAV lending as a substitute for full portfolio liquidation. GPs
+              increasingly prefer borrowing against portfolio NAV over executing
+              continuation vehicles — the economics are better in a rising-rate environment
+              and the optics are cleaner for LPs who are not yet ready to crystallise a loss.
+            </p>
+
+            <p style="margin:0;font-family:Georgia,'Times New Roman',serif;
+                       font-size:16px;line-height:1.7;color:#1a1a2e;">
+              The implication for secondaries buyers: deal flow from GP-led continuation
+              vehicles may compress in H2 2026 as NAV lending supply expands. Smart buyers
+              are building relationships with the LP interest channel now, before the shift
+              becomes consensus.
+            </p>
+
+          </td>
+        </tr>
+      </table>
+      <!-- /THE ANGLE -->
+
+
+      <!-- ============================================================
+           SECTION 6 — DEAL WATCH (with deal table)
+           ============================================================ -->
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+             width="680" style="max-width:680px;width:100%;background:#f8f6f0;">
+        <tr>
+          <td style="padding:32px 24px;">
+
+            <a name="deal_watch" id="deal_watch" style="display:block;"></a>
+
+            <p style="margin:0 0 4px 0;font-family:Arial,Helvetica,sans-serif;font-size:10px;
+                       letter-spacing:3px;text-transform:uppercase;color:#c9a84c;">
+              DEAL WATCH
+            </p>
+            <div style="height:1px;background:#c9a84c;margin:0 0 20px 0;"></div>
+
+            <p style="margin:0 0 24px 0;font-family:Georgia,'Times New Roman',serif;
+                       font-size:16px;line-height:1.7;color:#1a1a2e;">
+              Secondary transactions flagged by Herald Intelligence this week. Deal sizes
+              are reported where disclosed; signals are based on public filings, LP source
+              commentary, and corroborating intelligence.
+            </p>
+
+            <!-- DEAL TABLE -->
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+                   width="100%"
+                   style="border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;
+                          font-size:13px;">
+              <!-- Header -->
+              <thead>
+                <tr>
+                  <th style="background:#1a1a2e;color:#ffffff;padding:10px 12px;
+                             text-align:left;font-size:11px;letter-spacing:1px;
+                             text-transform:uppercase;width:22%;white-space:nowrap;">
+                    Company
+                  </th>
+                  <th style="background:#1a1a2e;color:#ffffff;padding:10px 12px;
+                             text-align:center;font-size:11px;letter-spacing:1px;
+                             text-transform:uppercase;width:14%;white-space:nowrap;">
+                    Stage
+                  </th>
+                  <th style="background:#1a1a2e;color:#ffffff;padding:10px 12px;
+                             text-align:center;font-size:11px;letter-spacing:1px;
+                             text-transform:uppercase;width:18%;white-space:nowrap;">
+                    Type
+                  </th>
+                  <th style="background:#1a1a2e;color:#ffffff;padding:10px 12px;
+                             text-align:center;font-size:11px;letter-spacing:1px;
+                             text-transform:uppercase;width:16%;white-space:nowrap;">
+                    Size
+                  </th>
+                  <th style="background:#1a1a2e;color:#ffffff;padding:10px 12px;
+                             text-align:left;font-size:11px;letter-spacing:1px;
+                             text-transform:uppercase;width:30%;white-space:nowrap;">
+                    Signal
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr style="background:#ffffff;">
+                  <td style="padding:10px 12px;border-bottom:1px solid #e8e4dc;vertical-align:top;">
+                    <span style="font-family:Georgia,'Times New Roman',serif;font-weight:bold;
+                                 color:#1a1a2e;">Stripe</span>
+                  </td>
+                  <td style="padding:10px 12px;text-align:center;border-bottom:1px solid #e8e4dc;
+                             vertical-align:top;">
+                    <span style="color:#1a1a2e;">Series I</span>
+                  </td>
+                  <td style="padding:10px 12px;text-align:center;border-bottom:1px solid #e8e4dc;
+                             vertical-align:top;">
+                    <span style="color:#1a1a2e;">Tender Offer</span>
+                  </td>
+                  <td style="padding:10px 12px;text-align:center;border-bottom:1px solid #e8e4dc;
+                             vertical-align:top;">
+                    <span style="color:#2d5a8e;font-weight:bold;">~$400M</span>
+                  </td>
+                  <td style="padding:10px 12px;border-bottom:1px solid #e8e4dc;vertical-align:top;">
+                    <span style="font-family:Georgia,'Times New Roman',serif;font-size:13px;
+                                 color:#1a1a2e;font-style:italic;">
+                      GP-initiated; 15% discount to last primary round
+                    </span>
+                  </td>
+                </tr>
+                <tr style="background:#f8f6f0;">
+                  <td style="padding:10px 12px;border-bottom:1px solid #e8e4dc;vertical-align:top;">
+                    <span style="font-family:Georgia,'Times New Roman',serif;font-weight:bold;
+                                 color:#1a1a2e;">Databricks</span>
+                  </td>
+                  <td style="padding:10px 12px;text-align:center;border-bottom:1px solid #e8e4dc;
+                             vertical-align:top;">
+                    <span style="color:#1a1a2e;">Series H</span>
+                  </td>
+                  <td style="padding:10px 12px;text-align:center;border-bottom:1px solid #e8e4dc;
+                             vertical-align:top;">
+                    <span style="color:#1a1a2e;">LP Interest</span>
+                  </td>
+                  <td style="padding:10px 12px;text-align:center;border-bottom:1px solid #e8e4dc;
+                             vertical-align:top;">
+                    <span style="color:#2d5a8e;font-weight:bold;">$80–120M</span>
+                  </td>
+                  <td style="padding:10px 12px;border-bottom:1px solid #e8e4dc;vertical-align:top;">
+                    <span style="font-family:Georgia,'Times New Roman',serif;font-size:13px;
+                                 color:#1a1a2e;font-style:italic;">
+                      Multiple LP sellers; aggregation underway
+                    </span>
+                  </td>
+                </tr>
+                <tr style="background:#ffffff;">
+                  <td style="padding:10px 12px;border-bottom:1px solid #e8e4dc;vertical-align:top;">
+                    <span style="font-family:Georgia,'Times New Roman',serif;font-weight:bold;
+                                 color:#1a1a2e;">Anduril</span>
+                  </td>
+                  <td style="padding:10px 12px;text-align:center;border-bottom:1px solid #e8e4dc;
+                             vertical-align:top;">
+                    <span style="color:#1a1a2e;">Series F</span>
+                  </td>
+                  <td style="padding:10px 12px;text-align:center;border-bottom:1px solid #e8e4dc;
+                             vertical-align:top;">
+                    <span style="color:#1a1a2e;">GP-Led CV</span>
+                  </td>
+                  <td style="padding:10px 12px;text-align:center;border-bottom:1px solid #e8e4dc;
+                             vertical-align:top;">
+                    <span style="color:#2d5a8e;font-weight:bold;">$300M+</span>
+                  </td>
+                  <td style="padding:10px 12px;border-bottom:1px solid #e8e4dc;vertical-align:top;">
+                    <span style="font-family:Georgia,'Times New Roman',serif;font-size:13px;
+                                 color:#1a1a2e;font-style:italic;">
+                      Continuation vehicle; Founders Fund rolling largest position
+                    </span>
+                  </td>
+                </tr>
+                <tr style="background:#f8f6f0;">
+                  <td style="padding:10px 12px;border-bottom:1px solid #e8e4dc;vertical-align:top;">
+                    <span style="font-family:Georgia,'Times New Roman',serif;font-weight:bold;
+                                 color:#1a1a2e;">Plaid</span>
+                  </td>
+                  <td style="padding:10px 12px;text-align:center;border-bottom:1px solid #e8e4dc;
+                             vertical-align:top;">
+                    <span style="color:#1a1a2e;">Series D</span>
+                  </td>
+                  <td style="padding:10px 12px;text-align:center;border-bottom:1px solid #e8e4dc;
+                             vertical-align:top;">
+                    <span style="color:#1a1a2e;">LP Interest</span>
+                  </td>
+                  <td style="padding:10px 12px;text-align:center;border-bottom:1px solid #e8e4dc;
+                             vertical-align:top;">
+                    <span style="color:#2d5a8e;font-weight:bold;">$40–60M</span>
+                  </td>
+                  <td style="padding:10px 12px;border-bottom:1px solid #e8e4dc;vertical-align:top;">
+                    <span style="font-family:Georgia,'Times New Roman',serif;font-size:13px;
+                                 color:#1a1a2e;font-style:italic;">
+                      Fintech LP fatigue; below last round mark
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <!-- /DEAL TABLE -->
+
+          </td>
+        </tr>
+      </table>
+      <!-- /DEAL WATCH -->
+
+
+      <!-- ============================================================
+           SECTION 7 — DOM'S DEALS
+           ============================================================ -->
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+             width="680" style="max-width:680px;width:100%;background:#ffffff;">
+        <tr>
+          <td style="padding:32px 24px;">
+
+            <a name="doms_deals" id="doms_deals" style="display:block;"></a>
+
+            <p style="margin:0 0 4px 0;font-family:Arial,Helvetica,sans-serif;font-size:10px;
+                       letter-spacing:3px;text-transform:uppercase;color:#c9a84c;">
+              DOM'S DEALS
+            </p>
+            <div style="height:1px;background:#c9a84c;margin:0 0 20px 0;"></div>
+
+            <p style="margin:0 0 16px 0;font-family:Georgia,'Times New Roman',serif;
+                       font-size:16px;line-height:1.7;color:#1a1a2e;">
+              Three positions worth watching closely based on this week's intelligence.
+              These are not recommendations — they are observations from the data flow.
+            </p>
+
+            <p style="margin:0 0 16px 0;font-family:Georgia,'Times New Roman',serif;
+                       font-size:16px;line-height:1.7;color:#1a1a2e;">
+              <strong>1. OpenAI secondary demand.</strong> Volume of buyer inquiries up
+              significantly post-GPT-5 launch. Ask prices have firmed. Any meaningful
+              pullback toward $250/share should attract institutional attention.
+            </p>
+
+            <p style="margin:0 0 16px 0;font-family:Georgia,'Times New Roman',serif;
+                       font-size:16px;line-height:1.7;color:#1a1a2e;">
+              <strong>2. Klarna pre-IPO.</strong> With the IPO window reopening, secondary
+              sellers are pricing in a 12–18 month liquidity horizon. Current ask
+              implies a ~$55B valuation. Expect volatility in secondary pricing as
+              the S-1 process advances.
+            </p>
+
+            <p style="margin:0;font-family:Georgia,'Times New Roman',serif;
+                       font-size:16px;line-height:1.7;color:#1a1a2e;">
+              <strong>3. Fund-of-funds LP interest.</strong> The most overlooked corner
+              of the market. Several FoFs with 2017–2019 vintages are seeking exits on
+              tail-end exposures. Quality is mixed but pricing is compelling.
+            </p>
+
+          </td>
+        </tr>
+      </table>
+      <!-- /DOM'S DEALS -->
+
+
+      <!-- ============================================================
+           FOOTER
+           ============================================================ -->
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+             width="680" style="max-width:680px;width:100%;background:#1a1a2e;margin-top:0;">
+        <tr>
+          <td style="padding:32px 24px;text-align:center;">
+
+            <!-- Gold rule -->
+            <div style="height:1px;background:#c9a84c;margin:0 0 24px 0;"></div>
+
+            <!-- Wordmark -->
+            <p style="margin:0 0 4px 0;font-family:Arial,Helvetica,sans-serif;font-size:11px;
+                       letter-spacing:4px;text-transform:uppercase;color:#c9a84c;">
+              HERALD
+            </p>
+            <p style="margin:0 0 20px 0;font-family:Georgia,'Times New Roman',serif;
+                       font-size:14px;font-style:italic;color:#f8f6f0;">
+              The Secondaries Intelligence Report
+            </p>
+
+            <!-- Issue ref -->
+            <p style="margin:0 0 20px 0;font-family:Arial,Helvetica,sans-serif;
+                       font-size:11px;color:#6b7280;">
+              Issue #1
+            </p>
+
+            <!-- Unsubscribe — Beehiiv replaces these tokens server-side -->
+            <p style="margin:0 0 12px 0;font-family:Arial,Helvetica,sans-serif;
+                       font-size:11px;color:#6b7280;">
+              <a href="{{unsubscribe_url}}" style="color:#6b7280;text-decoration:underline;">
+                Unsubscribe
+              </a>
+              &nbsp;|&nbsp;
+              <a href="{{manage_preferences_url}}" style="color:#6b7280;text-decoration:underline;">
+                Manage preferences
+              </a>
+            </p>
+
+            <!-- Legal -->
+            <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:10px;
+                       color:#6b7280;line-height:1.6;">
+              &copy; 2026 HERALD. All rights reserved.<br />
+              This newsletter is for informational purposes only and does not constitute
+              investment advice. Past performance is not indicative of future results.<br />
+              HERALD is an independent publication focused on VC secondaries market intelligence.
+            </p>
+
+          </td>
+        </tr>
+      </table>
+      <!-- /FOOTER -->
+
+
+    </td>
+  </tr>
+</table>
+<!-- /EMAIL WRAPPER -->
+
+</body>
+</html>
