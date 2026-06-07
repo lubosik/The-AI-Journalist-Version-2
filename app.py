@@ -19,17 +19,24 @@ HERMES_TIMEOUT = int(os.getenv("HERMES_TIMEOUT_SECONDS", "900"))
 
 @cl.password_auth_callback
 def auth_callback(username: str, password: str):
+    dom_email = os.getenv("HERALD_DOM_EMAIL", "dom@herald.local").lower()
+    admin_email = os.getenv("HERALD_ADMIN_EMAIL", "lubosi@herald.local").lower()
     credentials = {
-        "dom": os.getenv("HERALD_DOM_PASSWORD", ""),
-        "lubosi": os.getenv("HERALD_ADMIN_PASSWORD", ""),
+        "dom": ("dom", os.getenv("HERALD_DOM_PASSWORD", ""), "client"),
+        dom_email: ("dom", os.getenv("HERALD_DOM_PASSWORD", ""), "client"),
+        "lubosi": ("lubosi", os.getenv("HERALD_ADMIN_PASSWORD", ""), "admin"),
+        admin_email: ("lubosi", os.getenv("HERALD_ADMIN_PASSWORD", ""), "admin"),
     }
-    expected = credentials.get(username, "")
+    credential = credentials.get(username.strip().lower())
+    if not credential:
+        return None
+    identifier, expected, role = credential
     if not expected or not hmac.compare_digest(password, expected):
         return None
     return cl.User(
-        identifier=username,
+        identifier=identifier,
         metadata={
-            "role": "admin" if username == "lubosi" else "client",
+            "role": role,
             "provider": "credentials",
         },
     )
@@ -296,4 +303,3 @@ async def on_decline(action):
         author="HERALD",
     ).send()
     await action.remove()
-
