@@ -13,7 +13,7 @@ assistant_message_autoscroll = true
 auto_tag_thread = true
 edit_message = true
 allow_thread_sharing = false
-favorites = true
+favorites = false
 
 [features.spontaneous_file_upload]
 enabled = true

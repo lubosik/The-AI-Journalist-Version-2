@@ -1,38 +1,156 @@
-(() => {
-  const brand = () => {
-    if (document.title !== "HERALD Intelligence") {
-      document.title = "HERALD Intelligence";
-    }
-    document.documentElement.style.scrollBehavior = "smooth";
+/* HERALD Intelligence — UI Enhancements v2 */
+(function () {
+  'use strict';
 
-    const placeholder = document.querySelector("textarea");
-    if (placeholder && placeholder.placeholder !== "Ask HERALD anything. Type / for commands...") {
-      placeholder.placeholder = "Ask HERALD anything. Type / for commands...";
+  /* ── Page title & placeholder ── */
+  function applyBranding() {
+    if (document.title !== 'HERALD Intelligence') {
+      document.title = 'HERALD Intelligence';
     }
-
-    document.querySelectorAll("a").forEach((link) => {
-      const text = (link.textContent || "").trim().toLowerCase();
-      if (text.includes("chainlit") && !text.includes("herald") && link.style.display !== "none") {
-        link.style.display = "none";
+    var ta = document.querySelector('textarea');
+    if (ta && ta.placeholder !== 'Ask HERALD anything. Type / for commands...') {
+      ta.placeholder = 'Ask HERALD anything. Type / for commands...';
+    }
+    // Hide Chainlit branding links
+    document.querySelectorAll('a').forEach(function (link) {
+      var t = (link.textContent || '').trim().toLowerCase();
+      if (t.includes('chainlit') && !t.includes('herald') && link.style.display !== 'none') {
+        link.style.display = 'none';
       }
     });
-
-    document.querySelectorAll("h1, h2").forEach((heading) => {
-      if ((heading.textContent || "").trim() === "Login to access the app") {
-        heading.textContent = "HERALD Intelligence";
-        if (!heading.nextElementSibling?.classList.contains("herald-login-subtitle")) {
-          const subtitle = document.createElement("p");
-          subtitle.className = "herald-login-subtitle";
-          subtitle.textContent = "Private intelligence workspace";
-          heading.insertAdjacentElement("afterend", subtitle);
+    // Rename login heading
+    document.querySelectorAll('h1, h2').forEach(function (h) {
+      if ((h.textContent || '').trim() === 'Login to access the app') {
+        h.textContent = 'HERALD Intelligence';
+        if (!h.nextElementSibling || !h.nextElementSibling.classList.contains('herald-login-subtitle')) {
+          var sub = document.createElement('p');
+          sub.className = 'herald-login-subtitle';
+          sub.textContent = 'Private intelligence workspace';
+          sub.style.cssText = 'font-size:14px;color:#9a9488;margin:4px 0 0;';
+          h.insertAdjacentElement('afterend', sub);
         }
       }
     });
-  };
+  }
 
-  document.addEventListener("DOMContentLoaded", brand);
-  new MutationObserver(brand).observe(document.documentElement, {
-    childList: true,
-    subtree: true,
+  /* ── Orbital H empty state ── */
+  var _orbitalInjected = false;
+
+  function createOrbital() {
+    var el = document.createElement('div');
+    el.id = 'herald-orbital-empty';
+    el.className = 'herald-empty-state';
+    el.innerHTML = [
+      '<div class="herald-orbital-wrapper" id="herald-orbital">',
+      '  <div class="herald-ring herald-ring-1"></div>',
+      '  <div class="herald-ring herald-ring-2"></div>',
+      '  <div class="herald-ring herald-ring-3"></div>',
+      '  <span class="herald-h">H</span>',
+      '</div>',
+      '<div class="herald-empty-title">HERALD Intelligence</div>',
+      '<div class="herald-empty-subtitle">',
+      "  Drop a link, a rumour, or a topic.<br>I'll find the VC secondaries angle.",
+      '</div>',
+    ].join('');
+    return el;
+  }
+
+  function findChatArea() {
+    return (
+      document.querySelector('[class*="message-container"]') ||
+      document.querySelector('[class*="chat-messages"]') ||
+      document.querySelector('[class*="messages-list"]') ||
+      document.querySelector('main')
+    );
+  }
+
+  function hasMessages() {
+    var area = findChatArea();
+    if (!area) return false;
+    var msgs = area.querySelectorAll(
+      '[class*="message"][class*="user"], [class*="message"][class*="assistant"], ' +
+      '[class*="human-message"], [class*="ai-message"]'
+    );
+    return msgs.length > 0;
+  }
+
+  function injectOrbital() {
+    if (_orbitalInjected) return;
+    if (hasMessages()) return;
+    var area = findChatArea();
+    if (!area) return;
+    area.appendChild(createOrbital());
+    _orbitalInjected = true;
+  }
+
+  function removeOrbital() {
+    var el = document.getElementById('herald-orbital-empty');
+    if (!el) { _orbitalInjected = false; return; }
+    el.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+    el.style.opacity = '0';
+    el.style.transform = 'scale(0.94)';
+    setTimeout(function () {
+      if (el.parentNode) el.parentNode.removeChild(el);
+      _orbitalInjected = false;
+    }, 320);
+  }
+
+  function setProcessing(active) {
+    var wrapper = document.getElementById('herald-orbital');
+    if (!wrapper) return;
+    if (active) {
+      wrapper.classList.add('herald-processing');
+    } else {
+      wrapper.classList.remove('herald-processing');
+    }
+  }
+
+  function syncOrbital() {
+    if (hasMessages()) {
+      if (_orbitalInjected) removeOrbital();
+    } else {
+      if (!_orbitalInjected) injectOrbital();
+    }
+    var area = findChatArea();
+    if (area) {
+      var running = area.querySelector('[data-status="running"]') ||
+                    area.querySelector('[data-running="true"]');
+      setProcessing(!!running);
+    }
+  }
+
+  var _observer = null;
+
+  function startObserver() {
+    if (_observer) return;
+    var target = document.querySelector('[class*="chat"]') ||
+                 document.querySelector('main') ||
+                 document.body;
+    if (!target) return;
+    _observer = new MutationObserver(function () {
+      syncOrbital();
+      applyBranding();
+    });
+    _observer.observe(target, { childList: true, subtree: true });
+  }
+
+  function init() {
+    applyBranding();
+    setTimeout(function () {
+      syncOrbital();
+      startObserver();
+    }, 150);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+
+  window.addEventListener('popstate', function () {
+    _orbitalInjected = false;
+    setTimeout(init, 200);
   });
+
 })();

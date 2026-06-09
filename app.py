@@ -10,11 +10,43 @@ from pathlib import Path
 from typing import Any
 
 import chainlit as cl
+from chainlit.data.sql_alchemy import SQLAlchemyDataLayer
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env")
 sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, "/root/herald-v2/tools")
+sys.path.insert(0, "/root/herald-v2")
+
+# Chainlit persistence enables thread history, new chat, and resume.
+_db_uri = os.getenv("SUPABASE_DB_URI_ASYNC") or os.getenv("SUPABASE_DB_URI", "")
+if _db_uri and "+asyncpg" not in _db_uri:
+    _db_uri = _db_uri.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+
+class HeraldSQLAlchemyDataLayer(SQLAlchemyDataLayer):
+    """Bridge Chainlit 2.11 with the existing Supabase Chainlit schema."""
+
+    async def execute_sql(self, query: str, parameters: dict):
+        query = query.replace(
+            's."metadata" LIKE :favorite_pattern',
+            's."metadata"::text LIKE :favorite_pattern',
+        )
+        return await super().execute_sql(query, parameters)
+
+    async def create_step(self, step_dict):
+        step_dict.pop("autoCollapse", None)
+        await super().create_step(step_dict)
+
+
+@cl.data_layer
+def get_data_layer():
+    if not _db_uri:
+        return None
+    return HeraldSQLAlchemyDataLayer(conninfo=_db_uri)
+
 
 AUTHOR = "HERALD"
 URL_RE = re.compile(r"https?://[^\s<>()]+")
@@ -29,6 +61,7 @@ COMMANDS = [
     {"id": "status", "icon": "activity", "description": "Check system and database status", "button": False},
     {"id": "transcript", "icon": "captions", "description": "Find a quote or transcript segment", "button": False},
     {"id": "linkedin", "icon": "share-2", "description": "Create a LinkedIn post", "button": False},
+    {"id": "model", "icon": "cpu", "description": "Switch AI model", "button": True},
 ]
 
 INTENTS = {
@@ -43,6 +76,16 @@ INTENTS = {
     "linkedin": ("Planning LinkedIn post", "share-2", "Turn the supplied idea into a concise LinkedIn draft."),
     "conversation": ("Thinking", "sparkles", "Use the conversation context and form a direct editorial response."),
 }
+
+AVAILABLE_MODELS = {
+    "gpt-4o": {"id": "openai/gpt-4o", "label": "GPT-4o", "description": "Fast, powerful"},
+    "claude-sonnet": {"id": "anthropic/claude-sonnet-4-5", "label": "Claude Sonnet", "description": "Best for writing"},
+    "claude-opus": {"id": "anthropic/claude-opus-4-6", "label": "Claude Opus", "description": "Most capable"},
+    "gemini-flash": {"id": "google/gemini-flash-1.5", "label": "Gemini Flash", "description": "Fastest"},
+    "perplexity": {"id": "perplexity/sonar-pro", "label": "Perplexity Sonar", "description": "Live web search"},
+}
+
+OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY", "")
 
 SYSTEM_PROMPT = """You are HERALD, Dom Pandolfo's AI journalist for VC secondaries.
 You are a sharp research colleague, not a generic chatbot.
@@ -110,32 +153,100 @@ async def register_commands() -> None:
 
 @cl.on_chat_start
 async def on_start():
+    if cl.user_session.get("_initialized"):
+        return
+    cl.user_session.set("_initialized", True)
+
     user = cl.user_session.get("user")
-    name = user.identifier.capitalize() if user else "Dom"
     cl.user_session.set("history", [{"role": "system", "content": SYSTEM_PROMPT}])
     cl.user_session.set("awaiting_draft_approval", False)
+    cl.user_session.set("cross_thread_loaded", False)
+    cl.user_session.set("selected_model", "openai/gpt-4o")
     await register_commands()
-    await cl.Message(
-        content=(
-            f"Hi {name}. I'm here.\n\n"
-            "Send a link, rumour, company, fund, deal, transcript request, or messy thought. "
-            "I'll show you what I'm doing, then give you the sharpest HERALD angle."
-        ),
-        author=AUTHOR,
-    ).send()
 
 
 @cl.on_chat_resume
 async def on_resume(thread):
+    """Restore a persisted conversation selected from the thread sidebar."""
     history = [{"role": "system", "content": SYSTEM_PROMPT}]
     for step in thread.get("steps", []):
-        if step.get("type") == "user_message":
-            history.append({"role": "user", "content": step.get("output", "")})
-        elif step.get("type") == "assistant_message":
-            history.append({"role": "assistant", "content": step.get("output", "")})
+        step_type = step.get("type", "")
+        output = step.get("output", "")
+        if not output:
+            continue
+        if step_type == "user_message":
+            history.append({"role": "user", "content": output})
+        elif step_type == "assistant_message":
+            history.append({"role": "assistant", "content": output})
+
     cl.user_session.set("history", history[-30:])
     cl.user_session.set("awaiting_draft_approval", False)
+    cl.user_session.set("cross_thread_loaded", True)
     await register_commands()
+
+    message_count = len([
+        step for step in thread.get("steps", [])
+        if step.get("type") in ("user_message", "assistant_message")
+        and step.get("output")
+    ])
+    thread_name = thread.get("name") or "this conversation"
+    await cl.Message(
+        content=f"Back in: {thread_name}. {message_count} messages here. Where were we?",
+        author=AUTHOR,
+    ).send()
+
+
+async def get_cross_thread_context(current_message: str) -> str:
+    """Return relevant assistant context from prior sessions, or fail silently."""
+    try:
+        from db.client import get_client
+
+        stop_words = {
+            "about", "would", "could", "should", "there", "their",
+            "these", "those", "what", "when", "where", "which", "that",
+            "this", "with", "have", "from", "they", "been", "will",
+        }
+        keywords = [
+            word.lower()
+            for word in re.findall(r"[A-Za-z0-9-]+", current_message)
+            if len(word) > 4 and word.lower() not in stop_words
+        ][:4]
+        if not keywords:
+            return ""
+
+        supabase = get_client()
+        persisted = (
+            supabase.table("steps")
+            .select("output,createdAt")
+            .eq("type", "assistant_message")
+            .order("createdAt", desc=True)
+            .limit(80)
+            .execute()
+        )
+        legacy = (
+            supabase.table("conversation_memory")
+            .select("content,created_at")
+            .eq("role", "assistant")
+            .order("created_at", desc=True)
+            .limit(80)
+            .execute()
+        )
+        candidates = [
+            {"content": message.get("output") or ""}
+            for message in persisted.data or []
+        ] + list(legacy.data or [])
+        relevant = []
+        for message in candidates:
+            content = message.get("content") or ""
+            if any(keyword in content.lower() for keyword in keywords):
+                relevant.append(content[:180].replace("\n", " "))
+                if len(relevant) >= 2:
+                    break
+        if relevant:
+            return "Context from past sessions: " + " | ".join(relevant)
+    except Exception:
+        pass
+    return ""
 
 
 def classify_intent(text: str, command: str | None = None) -> str:
@@ -149,6 +260,7 @@ def classify_intent(text: str, command: str | None = None) -> str:
         "status": "status",
         "transcript": "transcript",
         "linkedin": "linkedin",
+        "model": "model",
     }
     if command and command.lower() in command_map:
         return command_map[command.lower()]
@@ -202,11 +314,16 @@ def intent_detail(intent_key: str, text: str, history: list[dict]) -> str:
 
 
 async def run_cli(*args: str, timeout: int = 900) -> dict:
+    _env = {
+        **os.environ,
+        "PYTHONPATH": f"{ROOT / 'tools'}:{ROOT}",
+    }
     proc = await asyncio.create_subprocess_exec(
         os.getenv("PYTHON", "python3"),
         str(ROOT / "herald_cli.py"),
         *args,
         cwd=str(ROOT),
+        env=_env,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -219,8 +336,19 @@ async def run_cli(*args: str, timeout: int = 900) -> dict:
     return json.loads(output.splitlines()[-1])
 
 
+def _get_selected_model() -> str:
+    try:
+        selected_id = cl.user_session.get("selected_model") or "openai/gpt-4o"
+        for v in AVAILABLE_MODELS.values():
+            if v["id"] == selected_id:
+                return selected_id
+        return selected_id
+    except Exception:
+        return os.getenv("HERALD_CHAT_MODEL", "openai/gpt-4o")
+
+
 async def run_hermes(prompt: str) -> str:
-    api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
+    api_key = OPENROUTER_KEY or os.getenv("OPENAI_API_KEY")
     if api_key:
         from openai import AsyncOpenAI
 
@@ -230,7 +358,7 @@ async def run_hermes(prompt: str) -> str:
             timeout=45,
         )
         response = await client.chat.completions.create(
-            model=os.getenv("HERALD_CHAT_MODEL", "anthropic/claude-sonnet-4.5"),
+            model=_get_selected_model(),
             messages=[{"role": "user", "content": prompt}],
             max_tokens=900,
         )
@@ -254,9 +382,12 @@ async def run_hermes(prompt: str) -> str:
 
 
 def build_prompt(message: str, history: list[dict], tool_context: Any = None) -> str:
+    system_prompt = SYSTEM_PROMPT
+    if history and history[0].get("role") == "system":
+        system_prompt = history[0].get("content") or SYSTEM_PROMPT
     recent = "\n".join(
         f"{item['role'].upper()}: {item['content'][:1800]}"
-        for item in history[-8:]
+        for item in history[-20:]
         if item.get("role") != "system"
     )
     context = ""
@@ -266,7 +397,7 @@ def build_prompt(message: str, history: list[dict], tool_context: Any = None) ->
             "than merely saying it was stored:\n"
             + json.dumps(tool_context, ensure_ascii=True, default=str)[:30000]
         )
-    return f"{SYSTEM_PROMPT}\nRecent conversation:\n{recent or '(new conversation)'}\n\nCurrent request:\n{message}{context}"
+    return f"{system_prompt}\nRecent conversation:\n{recent or '(new conversation)'}\n\nCurrent request:\n{message}{context}"
 
 
 def compact_output(value: Any, limit: int = 900) -> str:
@@ -406,20 +537,87 @@ def format_plan(result: dict) -> str:
     return "\n".join(lines)
 
 
+async def get_smart_draft_topics() -> str:
+    """Pull topics from edition_topics + recent content_items for draft review."""
+    try:
+        from db.client import get_client
+        from datetime import datetime, timedelta
+
+        supabase = get_client()
+
+        # Get active edition number
+        edition_result = supabase.table("newsletter_editions") \
+            .select("edition_number") \
+            .order("edition_number", desc=True) \
+            .limit(1) \
+            .execute()
+        edition = (edition_result.data or [{}])[0].get("edition_number", "current")
+
+        # Dom's saved topics (highest priority)
+        saved = supabase.table("edition_topics") \
+            .select("topic, topic_type, priority") \
+            .eq("edition_number", edition) \
+            .eq("used", False) \
+            .order("priority", desc=True) \
+            .execute()
+        dom_topics = saved.data or []
+
+        # Recent ingested content (last 7 days)
+        week_ago = (datetime.now() - timedelta(days=7)).isoformat()
+        recent = supabase.table("content_items") \
+            .select("title, source_name, raw_text, published_at") \
+            .gte("scraped_at", week_ago) \
+            .order("scraped_at", desc=True) \
+            .limit(5) \
+            .execute()
+        recent_items = recent.data or []
+
+        lines = [f"Edition {edition} — ready to draft\n"]
+
+        if dom_topics:
+            lines.append(f"Your saved topics ({len(dom_topics)}):")
+            for t in dom_topics:
+                label = f"[{t['topic_type'].upper()}] " if t.get("topic_type") and t["topic_type"] != "topic" else ""
+                lines.append(f"  {label}{t['topic']}")
+        else:
+            lines.append("No topics explicitly saved yet.")
+
+        if recent_items:
+            lines.append(f"\nFrom this week's sources ({len(recent_items)} items):")
+            for item in recent_items[:3]:
+                title = item.get("title") or (item.get("raw_text") or "")[:80]
+                source = item.get("source_name", "")
+                lines.append(f"  [{source}] {title}")
+
+        return "\n".join(lines)
+
+    except Exception as exc:
+        return f"Could not load topics directly: {str(exc)[:100]}"
+
+
 async def handle_draft() -> str:
     async with cl.Step(name="Loading topic plan", type="tool", icon="list", default_open=True) as step:
-        result = await run_cli("view-plan")
-        step.output = compact_output(result, 2200)
-    topics = result.get("topics") or []
-    if not topics:
+        topics_text = await get_smart_draft_topics()
+        # Also try run_cli for full plan data
+        try:
+            result = await run_cli("view-plan")
+            plan_data = result
+            step.output = compact_output(result, 2200)
+        except Exception as exc:
+            plan_data = {}
+            step.output = topics_text[:400]
+
+    topics = plan_data.get("topics") or []
+    if not topics and "No topics" in topics_text:
         return "There is nothing to draft yet. Add the reporting targets first."
+
     actions = [
         cl.Action(name="confirm_draft", payload={}, label="Yes, draft it", icon="check"),
         cl.Action(name="continue_editing", payload={}, label="Add more topics first", icon="plus"),
     ]
     await cl.Message(content="Awaiting your approval.", actions=actions, author=AUTHOR).send()
     cl.user_session.set("awaiting_draft_approval", True)
-    return f"{format_plan(result)}\n\nI will not start generation until you approve this plan."
+    return f"{topics_text}\n\nI will not start generation until you approve this plan."
 
 
 async def handle_status() -> str:
@@ -476,6 +674,37 @@ async def on_message(message: cl.Message):
     history = cl.user_session.get("history") or [{"role": "system", "content": SYSTEM_PROMPT}]
     command = (message.command or "").lower() or None
     text = message.content.strip()
+
+    # Handle model switch command
+    if command == "model" or text.strip().lower().startswith("/model"):
+        current = cl.user_session.get("selected_model", "openai/gpt-4o")
+        # Check if switching
+        arg = text.replace("/model", "").strip().lower()
+        if arg and arg in AVAILABLE_MODELS:
+            new_model = AVAILABLE_MODELS[arg]["id"]
+            cl.user_session.set("selected_model", new_model)
+            await cl.Message(
+                content=f"Switched to {AVAILABLE_MODELS[arg]['label']} (`{new_model}`)",
+                author=AUTHOR,
+            ).send()
+            return
+        model_list = "\n".join([
+            f"{'→ ' if v['id'] == current else '  '}{k}: {v['label']} — {v['description']}"
+            for k, v in AVAILABLE_MODELS.items()
+        ])
+        await cl.Message(
+            content=f"Current model: `{current}`\n\nAvailable:\n```\n{model_list}\n```\nType a model name to switch (e.g. `claude-sonnet`)",
+            author=AUTHOR,
+        ).send()
+        return
+
+    if not cl.user_session.get("cross_thread_loaded"):
+        cross_context = await get_cross_thread_context(text)
+        if cross_context and history and history[0].get("role") == "system":
+            history[0]["content"] = f"{SYSTEM_PROMPT}\n\nPAST CONTEXT:\n{cross_context}"
+            cl.user_session.set("history", history)
+        cl.user_session.set("cross_thread_loaded", True)
+
     intent_key = classify_intent(text, command)
     display, icon, _ = INTENTS[intent_key]
 
