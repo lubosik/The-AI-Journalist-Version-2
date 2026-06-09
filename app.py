@@ -316,7 +316,7 @@ def intent_detail(intent_key: str, text: str, history: list[dict]) -> str:
 async def run_cli(*args: str, timeout: int = 900) -> dict:
     _env = {
         **os.environ,
-        "PYTHONPATH": f"{ROOT / 'tools'}:{ROOT}",
+        "PYTHONPATH": f"{ROOT / 'tools'}:{ROOT}:/root/herald",
     }
     proc = await asyncio.create_subprocess_exec(
         os.getenv("PYTHON", "python3"),
@@ -543,56 +543,59 @@ async def get_smart_draft_topics() -> str:
         from db.client import get_client
         from datetime import datetime, timedelta
 
+        # Get active edition via run_cli (avoids brittle direct table queries)
+        plan = {}
+        try:
+            plan = await run_cli("view-plan")
+        except Exception:
+            pass
+        edition_data = plan.get("edition", {})
+        edition = edition_data.get("active_edition", "current")
+        dom_topics = plan.get("topics") or []
+        # Only show unused topics for the current edition
+        dom_topics = [t for t in dom_topics if not t.get("used")]
+
         supabase = get_client()
 
-        # Get active edition number
-        edition_result = supabase.table("newsletter_editions") \
-            .select("edition_number") \
-            .order("edition_number", desc=True) \
-            .limit(1) \
-            .execute()
-        edition = (edition_result.data or [{}])[0].get("edition_number", "current")
-
-        # Dom's saved topics (highest priority)
-        saved = supabase.table("edition_topics") \
-            .select("topic, topic_type, priority") \
-            .eq("edition_number", edition) \
-            .eq("used", False) \
-            .order("priority", desc=True) \
-            .execute()
-        dom_topics = saved.data or []
-
-        # Recent ingested content (last 7 days)
+        # Recent ingested content from the three sources (last 7 days)
         week_ago = (datetime.now() - timedelta(days=7)).isoformat()
         recent = supabase.table("content_items") \
-            .select("title, source_name, raw_text, published_at") \
+            .select("title, source_name, raw_text, scraped_at") \
+            .in_("source_name", ["elenanisonoff", "TBPN", "All-In Podcast"]) \
             .gte("scraped_at", week_ago) \
             .order("scraped_at", desc=True) \
-            .limit(5) \
+            .limit(6) \
             .execute()
         recent_items = recent.data or []
 
-        lines = [f"Edition {edition} — ready to draft\n"]
+        lines = [f"Edition {edition} — draft review\n"]
 
         if dom_topics:
             lines.append(f"Your saved topics ({len(dom_topics)}):")
             for t in dom_topics:
-                label = f"[{t['topic_type'].upper()}] " if t.get("topic_type") and t["topic_type"] != "topic" else ""
-                lines.append(f"  {label}{t['topic']}")
+                if isinstance(t, dict):
+                    ttype = t.get("topic_type", "topic")
+                    label = f"[{ttype.upper()}] " if ttype and ttype != "topic" else ""
+                    lines.append(f"  {label}{t.get('topic', str(t))}")
+                else:
+                    lines.append(f"  {t}")
         else:
-            lines.append("No topics explicitly saved yet.")
+            lines.append("No topics saved by you yet for this edition.")
 
         if recent_items:
-            lines.append(f"\nFrom this week's sources ({len(recent_items)} items):")
-            for item in recent_items[:3]:
+            lines.append(f"\nThis week from sources ({len(recent_items)} items):")
+            for item in recent_items:
                 title = item.get("title") or (item.get("raw_text") or "")[:80]
                 source = item.get("source_name", "")
-                lines.append(f"  [{source}] {title}")
+                scraped = (item.get("scraped_at") or "")[:10]
+                lines.append(f"  [{source} {scraped}] {title}")
+        else:
+            lines.append("\nNo new source content this week yet.")
 
         return "\n".join(lines)
 
     except Exception as exc:
-        return f"Could not load topics directly: {str(exc)[:100]}"
+        return f"Could not load topics: {str(exc)[:120]}"
 
 
 async def handle_draft() -> str:
@@ -762,6 +765,10 @@ async def on_message(message: cl.Message):
 
 @cl.action_callback("confirm_draft")
 async def on_confirm_draft(action):
+    import sys as _sys
+    for _p in [str(ROOT / "tools"), str(ROOT), "/root/herald-v2/tools", "/root/herald-v2", "/root/herald"]:
+        if _p not in _sys.path:
+            _sys.path.insert(0, _p)
     async with cl.Step(name="Starting approved newsletter pipeline", type="tool", icon="play", default_open=True) as step:
         step.input = "Topic plan approved by Dom"
         try:

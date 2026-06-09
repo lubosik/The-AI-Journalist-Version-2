@@ -11,11 +11,12 @@
     if (ta && ta.placeholder !== 'Ask HERALD anything. Type / for commands...') {
       ta.placeholder = 'Ask HERALD anything. Type / for commands...';
     }
-    // Hide Chainlit branding links
+    // Hide Chainlit branding links (text or href based)
     document.querySelectorAll('a').forEach(function (link) {
       var t = (link.textContent || '').trim().toLowerCase();
-      if (t.includes('chainlit') && !t.includes('herald') && link.style.display !== 'none') {
-        link.style.display = 'none';
+      var h = (link.href || '').toLowerCase();
+      if ((t.includes('chainlit') || h.includes('chainlit')) && !t.includes('herald')) {
+        link.style.cssText += 'display:none!important;visibility:hidden!important;';
       }
     });
     // Rename login heading

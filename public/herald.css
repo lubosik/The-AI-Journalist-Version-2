@@ -497,9 +497,18 @@ pre, code {
   backdrop-filter: blur(8px) !important;
 }
 
-/* Chainlit branding removal */
+/* Chainlit branding removal — catch all possible patterns */
 a[href*="chainlit"],
+a[href*="chainlit.io"],
 [class*="watermark"],
-[class*="powered-by"] {
+[class*="powered-by"],
+[class*="branding"],
+[class*="built-with"],
+[class*="footer-link"],
+[aria-label*="chainlit" i],
+[title*="chainlit" i] {
   display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
