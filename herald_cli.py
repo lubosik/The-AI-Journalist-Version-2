@@ -284,6 +284,84 @@ async def morning_brief() -> dict:
     return {"sources": results, "new_items": sum(results.values())}
 
 
+async def research(args) -> dict:
+    from intelligence.tools import web_research
+
+    return await web_research(args.topic, deep=args.deep)
+
+
+async def find_transcript(args) -> dict:
+    from db.client import get_client
+
+    stopwords = {
+        "about", "after", "again", "also", "and", "are", "discuss", "find",
+        "for", "from", "have", "into", "off", "offers", "part", "said",
+        "segment", "that", "the", "their", "they", "this", "transcript",
+        "valuation", "where", "with",
+    }
+    words = [
+        word for word in re.findall(r"[a-z0-9-]{3,}", args.query.lower())
+        if word not in stopwords
+    ]
+    rows = (
+        get_client()
+        .table("content_items")
+        .select("source_name,source_type,source_url,title,raw_text,published_at")
+        .in_("source_type", ["youtube", "podcast", "tiktok"])
+        .order("published_at", desc=True)
+        .limit(300)
+        .execute()
+        .data
+        or []
+    )
+    ranked = []
+    for row in rows:
+        text = row.get("raw_text") or ""
+        lower = text.lower()
+        matched = [word for word in words if word in lower]
+        required = 1 if len(words) <= 2 else 2
+        if len(matched) < required:
+            continue
+        phrase_bonus = 8 if args.query.lower() in lower else 0
+        score = phrase_bonus + sum(lower.count(word) for word in matched)
+        anchor_word = min(matched, key=lower.count)
+        anchor = max(0, lower.find(anchor_word))
+        start = max(0, anchor - 260)
+        end = min(len(text), anchor + 900)
+        ranked.append(
+            (
+                score,
+                {
+                    "source_name": row.get("source_name", ""),
+                    "episode_title": row.get("title", ""),
+                    "source_url": row.get("source_url", ""),
+                    "segment": text[start:end].strip(),
+                    "published_at": (row.get("published_at") or "")[:10],
+                    "matched_terms": matched,
+                },
+            )
+        )
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    if ranked:
+        return {
+            "found": True,
+            "results": [item[1] for item in ranked[:5]],
+            "searched_channels": [],
+            "note": f"Found {len(ranked)} matching transcript segments in the knowledge base.",
+        }
+
+    from intelligence.tools import search_transcript_by_topic
+
+    return await search_transcript_by_topic(args.query, days_back=args.days_back)
+
+
+async def linkedin(args) -> dict:
+    from intelligence.agent import handle_linkedin_repurpose
+
+    result = await handle_linkedin_repurpose({"topic": args.topic}, [])
+    return {"post": result}
+
+
 async def download_html() -> dict:
     from db.queries import get_latest_newsletter_issue
 
@@ -434,6 +512,14 @@ def parser() -> argparse.ArgumentParser:
     save.add_argument("--topic-type", default="topic")
     save.add_argument("--edition-offset", type=int, default=0)
     commands.add_parser("morning-brief")
+    research_parser = commands.add_parser("research")
+    research_parser.add_argument("topic")
+    research_parser.add_argument("--deep", action="store_true")
+    transcript = commands.add_parser("find-transcript")
+    transcript.add_argument("query")
+    transcript.add_argument("--days-back", type=int, default=30)
+    linkedin_parser = commands.add_parser("linkedin")
+    linkedin_parser.add_argument("topic")
     commands.add_parser("download-html")
     commands.add_parser("publish-latest")
     commands.add_parser("draft-context")
@@ -451,6 +537,9 @@ async def main() -> None:
         "view-plan": view_plan,
         "save-topic": lambda: save_topic(args),
         "morning-brief": morning_brief,
+        "research": lambda: research(args),
+        "find-transcript": lambda: find_transcript(args),
+        "linkedin": lambda: linkedin(args),
         "download-html": download_html,
         "publish-latest": publish_latest,
         "draft-context": draft_context,

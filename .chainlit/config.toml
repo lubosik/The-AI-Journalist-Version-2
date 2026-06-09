@@ -6,16 +6,18 @@ session_timeout = 86400
 cache = false
 
 [features]
-unsafe_allow_html = false
+unsafe_allow_html = true
 latex = false
 user_message_autoscroll = true
+assistant_message_autoscroll = true
 auto_tag_thread = true
 edit_message = true
 allow_thread_sharing = false
+favorites = true
 
 [features.spontaneous_file_upload]
 enabled = true
-accept = ["image/*", "application/pdf", "text/plain", "text/html"]
+accept = ["*/*"]
 max_files = 5
 max_size_mb = 50
 
@@ -32,7 +34,10 @@ custom_css = "/public/herald.css"
 custom_js = "/public/herald.js"
 alert_style = "modern"
 confirm_new_chat = false
+login_page_image = "/public/login-bg.svg"
+login_page_image_dark_filter = "brightness-30"
+logo_file_url = "/public/herald-logo.svg"
+default_avatar_file_url = "/public/avatars/herald.svg"
 
 [meta]
 generated_by = "HERALD v2"
-

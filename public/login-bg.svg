@@ -1,0 +1,21 @@
+<svg width="1920" height="1080" viewBox="0 0 1920 1080" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="g1" cx="50%" cy="38%" r="62%">
+      <stop offset="0%" stop-color="#201a24"/>
+      <stop offset="48%" stop-color="#0d0b13"/>
+      <stop offset="100%" stop-color="#080810"/>
+    </radialGradient>
+    <linearGradient id="line" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#c9a84c" stop-opacity="0"/>
+      <stop offset=".5" stop-color="#c9a84c" stop-opacity=".38"/>
+      <stop offset="1" stop-color="#c9a84c" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="#080810"/>
+  <rect width="1920" height="1080" fill="url(#g1)"/>
+  <circle cx="960" cy="470" r="260" stroke="#c9a84c" stroke-opacity=".035"/>
+  <circle cx="960" cy="470" r="330" stroke="#c9a84c" stroke-opacity=".02"/>
+  <text x="960" y="570" text-anchor="middle" font-family="Georgia, serif" font-size="330" font-weight="700" fill="#c9a84c" fill-opacity="0.055">H</text>
+  <rect x="560" y="710" width="800" height="1" fill="url(#line)"/>
+  <text x="960" y="754" text-anchor="middle" font-family="Georgia, serif" font-size="17" letter-spacing="9" fill="#c9a84c" fill-opacity="0.42">INTELLIGENCE</text>
+</svg>
