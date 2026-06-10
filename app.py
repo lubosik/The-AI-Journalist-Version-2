@@ -58,6 +58,25 @@ def get_data_layer():
     return HeraldSQLAlchemyDataLayer(conninfo=_db_uri)
 
 
+@cl.on_app_startup
+async def on_app_startup():
+    """Create Chainlit + app tables if they don't exist. Runs once at startup."""
+    if not _db_uri:
+        return
+    import sqlalchemy
+    from sqlalchemy.ext.asyncio import create_async_engine
+    schema_sql = (ROOT / "schema.sql").read_text()
+    engine = create_async_engine(_db_uri)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(sqlalchemy.text(schema_sql))
+        print("[HERALD] Schema bootstrap complete.")
+    except Exception as e:
+        print(f"[HERALD] Schema bootstrap warning: {e}")
+    finally:
+        await engine.dispose()
+
+
 AUTHOR = "HERALD"
 URL_RE = re.compile(r"https?://[^\s<>()]+")
 HERMES_TIMEOUT = int(os.getenv("HERMES_TIMEOUT_SECONDS", "900"))
