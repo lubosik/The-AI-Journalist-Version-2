@@ -44,11 +44,36 @@ class HeraldSQLAlchemyDataLayer(SQLAlchemyDataLayer):
     async def get_user(self, identifier: str):
         """Get user, auto-creating on first login so the thread endpoint never 404s."""
         from chainlit.user import User
-        result = await super().get_user(identifier)
-        if result is not None:
-            return result
-        # First login — upsert a minimal user record so Chainlit can attach threads.
-        return await self.create_user(User(identifier=identifier, metadata={}))
+        try:
+            result = await super().get_user(identifier)
+            if result is not None:
+                return result
+            # First login — upsert a minimal user record so Chainlit can attach threads.
+            return await self.create_user(User(identifier=identifier, metadata={}))
+        except Exception as exc:
+            print(f"[HERALD] get_user failed for '{identifier}': {exc}")
+            # Return None rather than raising — Chainlit handles a missing user gracefully.
+            return None
+
+    async def get_thread_author(self, thread_id: str) -> str | None:
+        """Override to return None safely instead of raising when thread is not found."""
+        try:
+            return await super().get_thread_author(thread_id)
+        except Exception:
+            return None
+
+    async def list_threads(self, pagination, filters):
+        """Override to return an empty page instead of raising when no threads exist."""
+        try:
+            return await super().list_threads(pagination, filters)
+        except Exception as exc:
+            print(f"[HERALD] list_threads warning: {exc}")
+            # Return a minimal empty page object that Chainlit's sidebar can render.
+            from chainlit.types import PageInfo, PaginatedResponse
+            return PaginatedResponse(
+                data=[],
+                pageInfo=PageInfo(hasNextPage=False, startCursor=None, endCursor=None),
+            )
 
 
 @cl.data_layer
@@ -380,7 +405,11 @@ async def on_start():
     cl.user_session.set("history", [{"role": "system", "content": get_herald_system()}])
     cl.user_session.set("awaiting_draft_approval", False)
     cl.user_session.set("cross_thread_loaded", False)
-    cl.user_session.set("selected_model", "hermes")
+    # Default to env-configured model; fall back to "gpt-4o" (OpenRouter API) if unset.
+    default_model = os.getenv("HERALD_DEFAULT_MODEL", "gpt-4o")
+    if default_model not in AVAILABLE_MODELS:
+        default_model = "gpt-4o"
+    cl.user_session.set("selected_model", default_model)
     await register_commands()
 
 
@@ -415,7 +444,10 @@ async def on_resume(thread):
     cl.user_session.set("history", history[-30:])
     cl.user_session.set("awaiting_draft_approval", False)
     cl.user_session.set("cross_thread_loaded", True)
-    cl.user_session.set("selected_model", cl.user_session.get("selected_model") or "hermes")
+    default_model = os.getenv("HERALD_DEFAULT_MODEL", "gpt-4o")
+    if default_model not in AVAILABLE_MODELS:
+        default_model = "gpt-4o"
+    cl.user_session.set("selected_model", cl.user_session.get("selected_model") or default_model)
     await register_commands()
     # DO NOT send any message here.
 
@@ -598,7 +630,10 @@ async def run_cli(*args: str, timeout: int = 900) -> dict:
 
 def _get_selected_model() -> str:
     try:
-        key = cl.user_session.get("selected_model") or "hermes"
+        default_model = os.getenv("HERALD_DEFAULT_MODEL", "gpt-4o")
+        if default_model not in AVAILABLE_MODELS:
+            default_model = "gpt-4o"
+        key = cl.user_session.get("selected_model") or default_model
         model = AVAILABLE_MODELS.get(key)
         if model:
             return model["id"]
@@ -626,20 +661,29 @@ async def run_hermes(prompt: str) -> str:
         content = response.choices[0].message.content
         if content:
             return content.strip()
+        raise RuntimeError("API returned an empty response")
 
-    proc = await asyncio.create_subprocess_exec(
-        os.getenv("HERMES_COMMAND", "hermes"),
-        "-z",
-        prompt,
-        cwd=str(ROOT),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=min(HERMES_TIMEOUT, 20))
-    response = stdout.decode(errors="replace").strip()
-    if proc.returncode != 0 or not response:
-        raise RuntimeError(stderr.decode(errors="replace").strip() or "Reasoning model returned no response")
-    return response
+    # Local binary fallback — only attempted when no API key is configured.
+    hermes_cmd = os.getenv("HERMES_COMMAND", "hermes")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            hermes_cmd,
+            "-z",
+            prompt,
+            cwd=str(ROOT),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=min(HERMES_TIMEOUT, 20))
+        response = stdout.decode(errors="replace").strip()
+        if proc.returncode != 0 or not response:
+            raise RuntimeError(stderr.decode(errors="replace").strip() or "Reasoning model returned no response")
+        return response
+    except FileNotFoundError:
+        raise RuntimeError(
+            f"No API key configured and the local model binary '{hermes_cmd}' was not found. "
+            "Set OPENROUTER_API_KEY in your environment."
+        )
 
 
 def build_prompt(message: str, history: list[dict], tool_context: Any = None) -> str:

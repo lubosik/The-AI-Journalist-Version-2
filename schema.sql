@@ -72,14 +72,24 @@ CREATE TABLE IF NOT EXISTS feedbacks (
 CREATE TABLE IF NOT EXISTS content_items (
   "id"           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   "source_url"   TEXT,
+  "source_name"  TEXT,
   "title"        TEXT,
   "content"      TEXT,
+  "raw_text"     TEXT,
   "summary"      TEXT,
   "tags"         TEXT[],
   "source_type"  TEXT,
+  "published_at" TIMESTAMPTZ,
+  "scraped_at"   TIMESTAMPTZ DEFAULT NOW(),
   "created_at"   TIMESTAMPTZ DEFAULT NOW(),
   "metadata"     JSONB DEFAULT '{}'
 );
+
+-- Safe column additions for environments where content_items already exists
+ALTER TABLE content_items ADD COLUMN IF NOT EXISTS "source_name" TEXT;
+ALTER TABLE content_items ADD COLUMN IF NOT EXISTS "raw_text"    TEXT;
+ALTER TABLE content_items ADD COLUMN IF NOT EXISTS "published_at" TIMESTAMPTZ;
+ALTER TABLE content_items ADD COLUMN IF NOT EXISTS "scraped_at"  TIMESTAMPTZ DEFAULT NOW();
 
 CREATE TABLE IF NOT EXISTS edition_topics (
   "id"          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -105,3 +115,5 @@ CREATE INDEX IF NOT EXISTS idx_steps_type         ON steps("type");
 CREATE INDEX IF NOT EXISTS idx_elements_threadid  ON elements("threadId");
 CREATE INDEX IF NOT EXISTS idx_feedbacks_forid    ON feedbacks("forId");
 CREATE INDEX IF NOT EXISTS idx_content_created    ON content_items("created_at" DESC);
+CREATE INDEX IF NOT EXISTS idx_content_source     ON content_items("source_name");
+CREATE INDEX IF NOT EXISTS idx_content_scraped    ON content_items("scraped_at" DESC);

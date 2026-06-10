@@ -123,6 +123,81 @@
     }
   }
 
+  /* ── Sidebar empty-state handling ── */
+  var _sidebarEmptyInjected = false;
+
+  function findSidebar() {
+    return (
+      document.querySelector('[class*="thread-list"]') ||
+      document.querySelector('[class*="sidebar"] [class*="threads"]') ||
+      document.querySelector('nav [class*="list"]') ||
+      document.querySelector('[class*="history"]')
+    );
+  }
+
+  function hasThreadItems(sidebar) {
+    if (!sidebar) return false;
+    return sidebar.querySelectorAll('a[href*="thread"], [class*="thread-item"], [class*="ThreadItem"]').length > 0;
+  }
+
+  function hasSidebarError(sidebar) {
+    if (!sidebar) return false;
+    // Look for error states or infinite loading spinners with no content
+    var hasSpinner = !!sidebar.querySelector('[class*="loading"], [class*="spinner"], [role="progressbar"]');
+    var hasError = !!sidebar.querySelector('[class*="error"]');
+    return (hasSpinner || hasError) && !hasThreadItems(sidebar);
+  }
+
+  function injectSidebarEmptyState() {
+    var sidebar = findSidebar();
+    if (!sidebar) return;
+    if (hasThreadItems(sidebar)) {
+      removeSidebarEmptyState();
+      return;
+    }
+    if (document.getElementById('herald-sidebar-empty')) return;
+    if (_sidebarEmptyInjected) return;
+
+    // Hide any error/spinner elements
+    sidebar.querySelectorAll('[class*="loading"], [class*="spinner"], [role="progressbar"], [class*="error"]').forEach(function (el) {
+      el.style.display = 'none';
+    });
+
+    var emptyEl = document.createElement('div');
+    emptyEl.id = 'herald-sidebar-empty';
+    emptyEl.style.cssText = [
+      'padding: 20px 16px;',
+      'text-align: center;',
+      'color: #9a9488;',
+      'font-size: 13px;',
+      'font-family: Inter, sans-serif;',
+      'line-height: 1.5;',
+    ].join('');
+    emptyEl.innerHTML = [
+      '<div style="font-size:24px;margin-bottom:8px;opacity:0.5;">H</div>',
+      '<div style="font-weight:600;color:#c9a84c;margin-bottom:4px;">No conversations yet</div>',
+      '<div>Start a new conversation<br>to begin your research session.</div>',
+    ].join('');
+    sidebar.appendChild(emptyEl);
+    _sidebarEmptyInjected = true;
+  }
+
+  function removeSidebarEmptyState() {
+    var el = document.getElementById('herald-sidebar-empty');
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+    _sidebarEmptyInjected = false;
+  }
+
+  function syncSidebar() {
+    var sidebar = findSidebar();
+    if (!sidebar) return;
+    if (hasThreadItems(sidebar)) {
+      removeSidebarEmptyState();
+    } else if (hasSidebarError(sidebar) || !hasThreadItems(sidebar)) {
+      injectSidebarEmptyState();
+    }
+  }
+
   var _observer = null;
 
   function startObserver() {
@@ -134,6 +209,7 @@
     _observer = new MutationObserver(function () {
       syncOrbital();
       applyBranding();
+      syncSidebar();
     });
     _observer.observe(target, { childList: true, subtree: true });
   }
@@ -142,8 +218,11 @@
     applyBranding();
     setTimeout(function () {
       syncOrbital();
+      syncSidebar();
       startObserver();
     }, 150);
+    // Re-check sidebar after a longer delay to catch post-render empty states
+    setTimeout(syncSidebar, 1500);
   }
 
   if (document.readyState === 'loading') {
