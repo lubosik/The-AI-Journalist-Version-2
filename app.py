@@ -389,8 +389,8 @@ async def on_resume(thread):
 
 # ── Cross-thread context ──────────────────────────────────────────────────────
 
-async def get_cross_thread_context(current_message: str) -> str:
-    """Return relevant assistant context from prior sessions, or fail silently."""
+async def get_cross_thread_context(current_message: str, user_identifier: str = "") -> str:
+    """Return relevant assistant context from prior sessions for this user only, or fail silently."""
     try:
         from db.client import get_client
 
@@ -408,14 +408,29 @@ async def get_cross_thread_context(current_message: str) -> str:
             return ""
 
         supabase = get_client()
-        persisted = (
+
+        # Scope to this user's threads only
+        user_thread_ids: list[str] = []
+        if user_identifier:
+            threads_resp = (
+                supabase.table("threads")
+                .select("id")
+                .eq("userId", user_identifier)
+                .execute()
+            )
+            user_thread_ids = [t["id"] for t in (threads_resp.data or [])]
+
+        steps_query = (
             supabase.table("steps")
             .select("output,createdAt")
             .eq("type", "assistant_message")
             .order("createdAt", desc=True)
             .limit(80)
-            .execute()
         )
+        if user_thread_ids:
+            steps_query = steps_query.in_("threadId", user_thread_ids)
+        persisted = steps_query.execute()
+
         legacy = (
             supabase.table("conversation_memory")
             .select("content,created_at")
@@ -1021,7 +1036,9 @@ async def on_message(message: cl.Message):
         return
 
     if not cl.user_session.get("cross_thread_loaded"):
-        cross_context = await get_cross_thread_context(text)
+        _current_user = cl.context.session.user
+        _uid = _current_user.identifier if _current_user else ""
+        cross_context = await get_cross_thread_context(text, _uid)
         if cross_context and history and history[0].get("role") == "system":
             history[0]["content"] = f"{get_herald_system()}\n\nPAST CONTEXT:\n{cross_context}"
             cl.user_session.set("history", history)
