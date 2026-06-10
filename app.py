@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import hmac
 import json
 import os
 import re
@@ -297,21 +296,27 @@ async def show_html_preview(html_content: str, title: str = "Newsletter Preview"
 
 @cl.password_auth_callback
 def auth_callback(username: str, password: str):
-    dom_email = os.getenv("HERALD_DOM_EMAIL", "dom@herald.local").lower()
-    admin_email = os.getenv("HERALD_ADMIN_EMAIL", "lubosi@herald.local").lower()
-    credentials = {
-        "dom": ("dom", os.getenv("HERALD_DOM_PASSWORD", ""), "client"),
-        dom_email: ("dom", os.getenv("HERALD_DOM_PASSWORD", ""), "client"),
-        "lubosi": ("lubosi", os.getenv("HERALD_ADMIN_PASSWORD", ""), "admin"),
-        admin_email: ("lubosi", os.getenv("HERALD_ADMIN_PASSWORD", ""), "admin"),
-    }
-    credential = credentials.get(username.strip().lower())
-    if not credential:
+    try:
+        dom_pw = (os.getenv("HERALD_DOM_PASSWORD") or "").strip()
+        admin_pw = (os.getenv("HERALD_ADMIN_PASSWORD") or "").strip()
+        dom_email = (os.getenv("HERALD_DOM_EMAIL") or "dom@herald.local").strip().lower()
+        admin_email = (os.getenv("HERALD_ADMIN_EMAIL") or "lubosi@herald.local").strip().lower()
+
+        credentials = {
+            "dom": ("dom", dom_pw, "client"),
+            dom_email: ("dom", dom_pw, "client"),
+            "lubosi": ("lubosi", admin_pw, "admin"),
+            admin_email: ("lubosi", admin_pw, "admin"),
+        }
+        credential = credentials.get((username or "").strip().lower())
+        if not credential:
+            return None
+        identifier, expected, role = credential
+        if not expected or (password or "").strip() != expected:
+            return None
+        return cl.User(identifier=identifier, metadata={"role": role, "provider": "credentials"})
+    except Exception:
         return None
-    identifier, expected, role = credential
-    if not expected or not hmac.compare_digest(password, expected):
-        return None
-    return cl.User(identifier=identifier, metadata={"role": role, "provider": "credentials"})
 
 
 @cl.set_starters
