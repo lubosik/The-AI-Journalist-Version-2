@@ -305,10 +305,12 @@ textarea:focus,
 }
 textarea::placeholder { color: var(--text-3) !important; }
 
-/* Send button */
-button[type="submit"],
+/* Send button — scoped to chat composer only */
 [class*="send-button"],
-[aria-label*="Send"] {
+[aria-label*="Send"],
+[class*="composer"] button[type="submit"],
+[class*="input-area"] button[type="submit"],
+[class*="chat-input"] button[type="submit"] {
   background: var(--gold) !important;
   color: #07070f !important;
   border: none !important;
@@ -320,7 +322,9 @@ button[type="submit"],
   font-weight: 700 !important;
   transition: all 0.15s ease !important;
 }
-button[type="submit"]:hover {
+[class*="send-button"]:hover,
+[class*="composer"] button[type="submit"]:hover,
+[class*="input-area"] button[type="submit"]:hover {
   background: var(--gold-bright) !important;
   transform: translateY(-1px) !important;
   box-shadow: 0 4px 18px var(--gold-glow) !important;
@@ -442,21 +446,65 @@ button[type="submit"]:hover {
   box-shadow: 0 0 0 3px var(--gold-glow) !important;
   outline: none !important;
 }
-[class*="login"] button[type="submit"] {
-  background: var(--gold) !important;
-  color: #07070f !important;
-  border-radius: 12px !important;
-  font-weight: 700 !important;
-  font-size: 14px !important;
-  padding: 14px !important;
-  letter-spacing: 0.04em !important;
+[class*="login"] button[type="submit"],
+[class*="auth"] button[type="submit"],
+form button[type="submit"]:not([class*="composer"] *):not([class*="input-area"] *):not([class*="chat-input"] *) {
+  position: relative !important;
   width: 100% !important;
-  border: none !important;
-  transition: all 0.2s ease !important;
+  height: auto !important;
+  min-height: 52px !important;
+  padding: 15px 28px !important;
+  border-radius: 14px !important;
+  font-family: 'Inter', sans-serif !important;
+  font-weight: 700 !important;
+  font-size: 15px !important;
+  letter-spacing: 0.06em !important;
+  text-transform: uppercase !important;
+  color: var(--gold-bright) !important;
+  background: rgba(201, 168, 76, 0.08) !important;
+  backdrop-filter: blur(20px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+  border: 1px solid rgba(201, 168, 76, 0.35) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.08),
+    inset 0 -1px 0 rgba(0,0,0,0.15),
+    0 4px 24px rgba(201,168,76,0.12),
+    0 1px 4px rgba(0,0,0,0.3) !important;
+  cursor: pointer !important;
+  transition: all 0.25s cubic-bezier(0.16,1,0.3,1) !important;
+  overflow: hidden !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
 }
-[class*="login"] button[type="submit"]:hover {
-  background: var(--gold-bright) !important;
-  box-shadow: 0 8px 32px var(--gold-glow) !important;
+[class*="login"] button[type="submit"]::before,
+[class*="auth"] button[type="submit"]::before,
+form button[type="submit"]::before {
+  content: '' !important;
+  position: absolute !important;
+  inset: 0 !important;
+  border-radius: inherit !important;
+  background: linear-gradient(135deg, rgba(255,255,255,0.07) 0%, transparent 60%) !important;
+  pointer-events: none !important;
+}
+[class*="login"] button[type="submit"]:hover,
+[class*="auth"] button[type="submit"]:hover,
+form button[type="submit"]:hover {
+  background: rgba(201, 168, 76, 0.15) !important;
+  border-color: rgba(201, 168, 76, 0.65) !important;
+  color: #fff !important;
+  transform: translateY(-2px) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.12),
+    0 8px 32px rgba(201,168,76,0.22),
+    0 0 0 1px rgba(201,168,76,0.2),
+    0 2px 8px rgba(0,0,0,0.4) !important;
+}
+[class*="login"] button[type="submit"]:active,
+form button[type="submit"]:active {
+  transform: translateY(0) !important;
+  box-shadow: 0 2px 12px rgba(201,168,76,0.15), inset 0 1px 0 rgba(255,255,255,0.06) !important;
 }
 
 /* ── AUTHOR LABEL ── */
