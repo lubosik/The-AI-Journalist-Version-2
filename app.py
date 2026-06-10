@@ -264,6 +264,11 @@ def classify_intent(text: str, command: str | None = None) -> str:
     }
     if command and command.lower() in command_map:
         return command_map[command.lower()]
+    # Handle slash-prefixed commands typed directly in the textarea
+    if lower.startswith("/"):
+        cmd = lower[1:].split()[0]
+        if cmd in command_map:
+            return command_map[cmd]
     if URL_RE.search(text):
         return "url_ingest"
     if any(x in lower for x in ("find the transcript", "find where", "part where", "quote from", "said on", "transcript segment")):
@@ -272,10 +277,11 @@ def classify_intent(text: str, command: str | None = None) -> str:
         return "research"
     if any(x in lower for x in ("include this", "add this", "save this", "make sure you cover", "put this in")):
         return "save_topic"
-    if any(x in lower for x in ("what topics", "edition plan", "what do we have saved", "what's planned")):
-        return "view_plan"
+    # Draft check comes before view_plan — "draft the newsletter" is more specific
     if any(x in lower for x in ("draft the newsletter", "generate the newsletter", "create the edition", "ready to draft")):
         return "draft"
+    if any(x in lower for x in ("what topics", "edition plan", "what do we have saved", "what's planned")):
+        return "view_plan"
     if any(x in lower for x in ("system status", "status check", "database status", "how is herald")):
         return "status"
     if any(x in lower for x in ("morning brief", "what came in", "what is new today")):
@@ -679,7 +685,8 @@ async def on_message(message: cl.Message):
     text = message.content.strip()
 
     # Handle model switch command
-    if command == "model" or text.strip().lower().startswith("/model"):
+    if command == "model" or text.strip().lower().startswith("/model") or \
+            any(x in text.lower() for x in ("what model", "switch model", "change model", "which model")):
         current = cl.user_session.get("selected_model", "openai/gpt-4o")
         # Check if switching
         arg = text.replace("/model", "").strip().lower()
