@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import json
 import os
 import re
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -74,11 +76,14 @@ INTENTS = {
     "status": ("Checking system health", "activity", "Inspect the active edition and database health."),
     "morning_brief": ("Planning source sweep", "sunrise", "Check Elena, TBPN, and All-In for new material."),
     "linkedin": ("Planning LinkedIn post", "share-2", "Turn the supplied idea into a concise LinkedIn draft."),
+    "tiktok_check": ("Checking Elena TikTok", "video", "Pull recent posts from elenanisonoff and summarise."),
+    "source_latest": ("Checking source", "rss", "Pull recent content from the requested source and summarise."),
     "conversation": ("Thinking", "sparkles", "Use the conversation context and form a direct editorial response."),
 }
 
 AVAILABLE_MODELS = {
-    "gpt-4o": {"id": "openai/gpt-4o", "label": "GPT-4o", "description": "Fast, powerful"},
+    "hermes": {"id": "openai/gpt-4o", "label": "Hermes (Default)", "description": "Your default model — recommended"},
+    "gpt-4o": {"id": "openai/gpt-4o", "label": "GPT-4o", "description": "Fast and powerful"},
     "claude-sonnet": {"id": "anthropic/claude-sonnet-4-5", "label": "Claude Sonnet", "description": "Best for writing"},
     "claude-opus": {"id": "anthropic/claude-opus-4-6", "label": "Claude Opus", "description": "Most capable"},
     "gemini-flash": {"id": "google/gemini-flash-1.5", "label": "Gemini Flash", "description": "Fastest"},
@@ -87,20 +92,199 @@ AVAILABLE_MODELS = {
 
 OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY", "")
 
-SYSTEM_PROMPT = """You are HERALD, Dom Pandolfo's AI journalist for VC secondaries.
-You are a sharp research colleague, not a generic chatbot.
+HTML_PREVIEW_DIR = ROOT / "public" / "previews"
+HTML_PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
 
-Focus on pre-IPO secondaries, GP-led continuation vehicles, LP liquidity,
-fund stakes, NAV discounts, cap-table transactions, family offices, RIAs,
-institutional allocators, and private-market dynamics.
 
-Write in short, direct sentences. Name people, funds, companies, numbers, and
-the strongest editorial angle. Explain what happened, why it matters, and who
-is exposed. Never respond with only "stored". Ask one precise question only
-when an editorial choice genuinely remains. Keep casual replies under 180
-words. Do not use asterisks, hashtags, em dashes, or internal-system language.
-"""
+def get_herald_system() -> str:
+    """Build system prompt with current date injected — called per-turn so date stays fresh."""
+    today = datetime.now().strftime("%A, %d %B %Y")
+    current_time = datetime.now().strftime("%H:%M")
+    return f"""You are HERALD — Dom Pandolfo's AI research partner and newsletter journalist.
 
+TODAY: {today} at {current_time}. You are always aware of the current date.
+When assessing content recency, use today's date as your reference.
+
+WHO DOM IS:
+Dom runs a pre-IPO VC secondaries advisory practice in the UK.
+He is a sophisticated institutional investor and deal flow specialist.
+His clients are family offices, RIAs, and institutional allocators.
+He publishes a weekly newsletter to this audience.
+You are his 24/7 research partner and the author of that newsletter.
+
+YOUR DOMAIN — THINK LIKE A 15-YEAR VC SECONDARIES SPECIALIST:
+You know the players: Apollo, Lexington, Hamilton Lane, Coller Capital,
+Ardian, AlpInvest, HarbourVest, Pantheon, Pomona, Partners Group.
+You track: GP-led continuation vehicles, LP secondary interest,
+fund stake sales, pre-IPO secondaries, NAV discount pricing,
+tender offers, cap table liquidity, DPI vs TVPI dynamics,
+J-curve mitigation strategies, and family office LP appetite.
+You read every TBPN episode, every All-In Podcast, and Elena Nisonoff's TikTok.
+You are opinionated. You have a view. You share it.
+
+THREE CONTENT SOURCES (automated daily):
+- Elena Nisonoff (@elenanisonoff) — TikTok — finance and VC commentary
+- TBPN Podcast (YouTube @tbpn) — VC and PE market commentary
+- All-In Podcast (YouTube @allinpodcast) — macro + tech + PE crossover
+
+YOUR TONE:
+Short sentences. Direct. Opinionated when you have a view.
+You do not hedge everything. You do not sound like a chatbot.
+You sound like a sharp colleague who has been in the room.
+You are HERALD. You have a voice. Use it.
+
+HARD RULES:
+1. NEVER respond in raw JSON. Always natural language prose.
+2. NEVER say "As an AI" or "I should note" or "I cannot access TikTok/YouTube".
+   If you cannot do something, say why and offer an alternative.
+3. NEVER ask what a URL is. Process it immediately.
+4. NEVER say only "stored". Return the insight after storing.
+5. NEVER use asterisks, em dashes, hashtags, or bullet points in casual chat.
+6. When asked about TikTok/YouTube/podcast: check the database first,
+   scrape if needed, summarise with today's date as context.
+7. Keep casual replies under 150 words.
+8. Sound opinionated. Not like you summarised something.
+
+TOOLS:
+/research — live web search for current deal activity
+/topics — view this week's edition plan
+/brief — morning ingestion from the three sources
+/draft — review topics and initiate newsletter draft
+/status — system health check
+/linkedin — generate a LinkedIn post
+/model — switch AI model
+Type any URL to ingest and analyse it."""
+
+
+# Module-level fallback for build_prompt (overridden per-turn in on_message)
+SYSTEM_PROMPT = get_herald_system()
+
+
+# ── JSON → prose sanitiser ────────────────────────────────────────────────────
+
+def json_to_natural_language(data: Any) -> str:
+    """Convert a parsed JSON value to readable prose. Never return raw JSON."""
+    if isinstance(data, list):
+        if not data:
+            return "Nothing to report."
+        return "\n".join(f"- {item}" for item in data if item)
+
+    if isinstance(data, dict):
+        # Morning brief format: {"sources": {"Elena": N, ...}, "new_items": N}
+        if "sources" in data and "new_items" in data:
+            total = data.get("new_items", 0)
+            sources = data.get("sources", {})
+            if total == 0:
+                return "Nothing new from sources today."
+            lines = [f"New this week: {total} item{'s' if total != 1 else ''} across sources."]
+            for source, count in sources.items():
+                if count and count > 0:
+                    lines.append(f"{source}: {count} new item{'s' if count != 1 else ''}")
+            return "\n".join(lines)
+
+        # Edition/topics format
+        if "topics" in data or "edition_number" in data or "active_edition" in data:
+            edition = data.get("edition_number") or data.get("active_edition") or data.get("edition", {}).get("active_edition", "current")
+            topics = data.get("topics", [])
+            if not topics:
+                return f"Edition {edition} has no saved topics yet. Drop links or tell me what must be covered."
+            lines = [f"Edition {edition}. {len(topics)} saved topic{'s' if len(topics) != 1 else ''}:"]
+            for t in topics[:20]:
+                label = t.get("topic") or t.get("title") or str(t) if isinstance(t, dict) else str(t)
+                lines.append(f"- {label}")
+            return "\n".join(lines)
+
+        # Error dict
+        if "error" in data and len(data) <= 3:
+            return f"That action encountered an issue: {data['error']}"
+
+        # Generic fallback
+        lines = []
+        for key, value in data.items():
+            key_label = key.replace("_", " ").title()
+            if isinstance(value, dict):
+                lines.append(f"{key_label}:")
+                for k2, v2 in value.items():
+                    lines.append(f"  {k2}: {v2}")
+            elif isinstance(value, list):
+                lines.append(f"{key_label}: {', '.join(str(v) for v in value)}")
+            else:
+                lines.append(f"{key_label}: {value}")
+        return "\n".join(lines) if lines else str(data)
+
+    return str(data)
+
+
+def sanitise_response(text: str) -> str:
+    """
+    HARD RULE: Dom must never see raw JSON as a response.
+    Convert any JSON/code-block responses to natural language prose.
+    """
+    if not text:
+        return text
+
+    stripped = text.strip()
+
+    # Detect if the entire response is JSON
+    if stripped.startswith("{") or stripped.startswith("["):
+        try:
+            data = json.loads(stripped)
+            return json_to_natural_language(data)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    # Detect JSON inside a fenced code block
+    json_block = re.search(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", stripped, re.DOTALL)
+    if json_block:
+        try:
+            data = json.loads(json_block.group(1))
+            prose = json_to_natural_language(data)
+            return re.sub(
+                r"```(?:json)?\s*(?:\{.*?\}|\[.*?\])\s*```",
+                prose,
+                stripped,
+                flags=re.DOTALL,
+            )
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    return text
+
+
+# ── HTML preview ─────────────────────────────────────────────────────────────
+
+async def show_html_preview(html_content: str, title: str = "Newsletter Preview") -> None:
+    """Save HTML to public dir and show as an inline iframe with action buttons."""
+    html_hash = hashlib.md5(html_content.encode()).hexdigest()[:8]
+    filename = f"preview_{html_hash}.html"
+    filepath = HTML_PREVIEW_DIR / filename
+    preview_url = f"/public/previews/{filename}"
+    tmp_path = f"/tmp/herald_newsletter_{html_hash}.html"
+
+    filepath.write_text(html_content, encoding="utf-8")
+    Path(tmp_path).write_text(html_content, encoding="utf-8")
+
+    preview_card = (
+        f'<div style="border:1px solid rgba(201,168,76,0.3);border-radius:12px;'
+        f'overflow:hidden;margin:8px 0;">'
+        f'<div style="background:rgba(201,168,76,0.08);padding:12px 16px;'
+        f'border-bottom:1px solid rgba(201,168,76,0.2);">'
+        f'<span style="font-family:Inter,sans-serif;font-size:13px;font-weight:600;'
+        f'color:#c9a84c;">{title}</span></div>'
+        f'<iframe src="{preview_url}" style="width:100%;height:540px;border:none;'
+        f'background:white;" sandbox="allow-same-origin allow-scripts"></iframe>'
+        f"</div>"
+    )
+
+    actions = [
+        cl.Action(name="export_html", payload={"html_path": tmp_path, "filename": f"herald_{html_hash}.html"}, label="Download HTML", icon="download"),
+        cl.Action(name="edit_newsletter_content", payload={"html_path": tmp_path}, label="Edit content", icon="pencil"),
+        cl.Action(name="approve_newsletter", payload={"issue_id": "latest"}, label="Approve and publish", icon="check"),
+    ]
+    await cl.Message(content=preview_card, actions=actions, author=AUTHOR).send()
+
+
+# ── Auth & starters ───────────────────────────────────────────────────────────
 
 @cl.password_auth_callback
 def auth_callback(username: str, password: str):
@@ -141,7 +325,7 @@ async def set_starters():
         ),
         cl.Starter(
             label="Draft newsletter",
-            message="Show me the topic plan. Let's decide if we are ready to draft this week.",
+            message="Draft the newsletter. Show me the topic plan.",
             icon="/public/icons/draft.svg",
         ),
     ]
@@ -151,24 +335,40 @@ async def register_commands() -> None:
     await cl.context.emitter.set_commands(COMMANDS)
 
 
+# ── Session lifecycle ─────────────────────────────────────────────────────────
+
 @cl.on_chat_start
 async def on_start():
+    # Guard against duplicate WebSocket dispatch
     if cl.user_session.get("_initialized"):
         return
     cl.user_session.set("_initialized", True)
-
-    user = cl.user_session.get("user")
-    cl.user_session.set("history", [{"role": "system", "content": SYSTEM_PROMPT}])
+    cl.user_session.set("_loaded_thread_id", None)
+    cl.user_session.set("history", [{"role": "system", "content": get_herald_system()}])
     cl.user_session.set("awaiting_draft_approval", False)
     cl.user_session.set("cross_thread_loaded", False)
-    cl.user_session.set("selected_model", "openai/gpt-4o")
+    cl.user_session.set("selected_model", "hermes")
     await register_commands()
 
 
 @cl.on_chat_resume
 async def on_resume(thread):
-    """Restore a persisted conversation selected from the thread sidebar."""
-    history = [{"role": "system", "content": SYSTEM_PROMPT}]
+    """
+    Restore a persisted conversation selected from the thread sidebar.
+    CRITICAL: Guard against WebSocket reconnect re-firing this handler.
+    Never send a message — silently restore context only.
+    Dom sees the existing conversation exactly as he left it.
+    """
+    thread_id = thread.get("id", "")
+
+    # If this thread is already loaded in this session, do nothing
+    if cl.user_session.get("_loaded_thread_id") == thread_id:
+        return
+
+    cl.user_session.set("_loaded_thread_id", thread_id)
+    cl.user_session.set("_initialized", True)
+
+    history = [{"role": "system", "content": get_herald_system()}]
     for step in thread.get("steps", []):
         step_type = step.get("type", "")
         output = step.get("output", "")
@@ -182,19 +382,12 @@ async def on_resume(thread):
     cl.user_session.set("history", history[-30:])
     cl.user_session.set("awaiting_draft_approval", False)
     cl.user_session.set("cross_thread_loaded", True)
+    cl.user_session.set("selected_model", cl.user_session.get("selected_model") or "hermes")
     await register_commands()
+    # DO NOT send any message here.
 
-    message_count = len([
-        step for step in thread.get("steps", [])
-        if step.get("type") in ("user_message", "assistant_message")
-        and step.get("output")
-    ])
-    thread_name = thread.get("name") or "this conversation"
-    await cl.Message(
-        content=f"Back in: {thread_name}. {message_count} messages here. Where were we?",
-        author=AUTHOR,
-    ).send()
 
+# ── Cross-thread context ──────────────────────────────────────────────────────
 
 async def get_cross_thread_context(current_message: str) -> str:
     """Return relevant assistant context from prior sessions, or fail silently."""
@@ -249,6 +442,8 @@ async def get_cross_thread_context(current_message: str) -> str:
     return ""
 
 
+# ── Intent classification ─────────────────────────────────────────────────────
+
 def classify_intent(text: str, command: str | None = None) -> str:
     lower = text.lower().strip()
     command_map = {
@@ -271,25 +466,36 @@ def classify_intent(text: str, command: str | None = None) -> str:
             return command_map[cmd]
     if URL_RE.search(text):
         return "url_ingest"
+    # Source-specific checks — before generic research
+    if any(x in lower for x in ("elena", "elenanisonoff", "tiktok")):
+        return "tiktok_check"
+    if any(x in lower for x in ("tbpn", "all-in podcast", "all in podcast", "allin podcast")):
+        return "source_latest"
     if any(x in lower for x in ("find the transcript", "find where", "part where", "quote from", "said on", "transcript segment")):
         return "transcript"
     if any(x in lower for x in ("research", "find out", "look into", "what's happening", "tell me about")):
         return "research"
-    if any(x in lower for x in ("include this", "add this", "save this", "make sure you cover", "put this in")):
+    if any(x in lower for x in ("include this", "add this", "save this", "make sure you cover", "put this in", "make sure you include")):
         return "save_topic"
-    # Draft check comes before view_plan — "draft the newsletter" is more specific
-    if any(x in lower for x in ("draft the newsletter", "generate the newsletter", "create the edition", "ready to draft")):
+    # Draft check must come before view_plan
+    if any(x in lower for x in (
+        "draft the newsletter", "draft newsletter", "generate the newsletter",
+        "create the edition", "ready to draft", "show me the topic plan",
+        "let's draft", "lets draft", "ready to generate", "start drafting",
+    )):
         return "draft"
     if any(x in lower for x in ("what topics", "edition plan", "what do we have saved", "what's planned")):
         return "view_plan"
     if any(x in lower for x in ("system status", "status check", "database status", "how is herald")):
         return "status"
-    if any(x in lower for x in ("morning brief", "what came in", "what is new today")):
+    if any(x in lower for x in ("morning brief", "what came in", "what is new today", "what's new today")):
         return "morning_brief"
     if any(x in lower for x in ("linkedin", "repurpose this")):
         return "linkedin"
     return "conversation"
 
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
 
 def platform_name(url: str) -> str:
     lower = url.lower()
@@ -344,11 +550,12 @@ async def run_cli(*args: str, timeout: int = 900) -> dict:
 
 def _get_selected_model() -> str:
     try:
-        selected_id = cl.user_session.get("selected_model") or "openai/gpt-4o"
-        for v in AVAILABLE_MODELS.values():
-            if v["id"] == selected_id:
-                return selected_id
-        return selected_id
+        key = cl.user_session.get("selected_model") or "hermes"
+        model = AVAILABLE_MODELS.get(key)
+        if model:
+            return model["id"]
+        # Fallback: treat value as a raw model ID
+        return key
     except Exception:
         return os.getenv("HERALD_CHAT_MODEL", "openai/gpt-4o")
 
@@ -388,9 +595,9 @@ async def run_hermes(prompt: str) -> str:
 
 
 def build_prompt(message: str, history: list[dict], tool_context: Any = None) -> str:
-    system_prompt = SYSTEM_PROMPT
+    system_prompt = get_herald_system()
     if history and history[0].get("role") == "system":
-        system_prompt = history[0].get("content") or SYSTEM_PROMPT
+        system_prompt = history[0].get("content") or system_prompt
     recent = "\n".join(
         f"{item['role'].upper()}: {item['content'][:1800]}"
         for item in history[-20:]
@@ -412,6 +619,7 @@ def compact_output(value: Any, limit: int = 900) -> str:
 
 
 async def stream_response(text: str) -> None:
+    text = sanitise_response(text)
     msg = cl.Message(content="", author=AUTHOR)
     await msg.send()
     chunks = re.findall(r"\S+\s*", text)
@@ -427,17 +635,17 @@ async def analyse_with_hermes(message: str, history: list[dict], context: Any = 
         try:
             response = await run_hermes(build_prompt(message, history, context))
             step.output = "Editorial response formed from the available context."
-            return response
+            return sanitise_response(response)
         except Exception as exc:
             step.output = f"Model unavailable: {str(exc)[:180]}"
             if context is not None:
-                return format_tool_fallback(context)
+                return sanitise_response(format_tool_fallback(context))
             return "I could not reach the reasoning model. The visible tool steps above show what completed."
 
 
 def format_tool_fallback(data: Any) -> str:
     if isinstance(data, str):
-        return data
+        return sanitise_response(data)
     if isinstance(data, dict):
         if data.get("findings"):
             return str(data["findings"])
@@ -445,8 +653,10 @@ def format_tool_fallback(data: Any) -> str:
             return str(data["note"])
         if data.get("message"):
             return str(data["message"])
-    return compact_output(data, 4000)
+    return json_to_natural_language(data)
 
+
+# ── Intent handlers ───────────────────────────────────────────────────────────
 
 async def handle_url(text: str, history: list[dict]) -> str:
     results = []
@@ -515,16 +725,24 @@ async def handle_transcript(text: str, history: list[dict]) -> str:
 async def handle_save_topic(text: str) -> str:
     async with cl.Step(name="Saving to active edition", type="tool", icon="bookmark", show_input=True) as step:
         step.input = text
-        result = await run_cli("save-topic", text)
-        step.output = compact_output(result)
+        try:
+            result = await run_cli("save-topic", text)
+            step.output = compact_output(result)
+        except Exception as exc:
+            result = {"error": str(exc)}
+            step.output = f"Failed: {str(exc)[:200]}"
     return format_tool_fallback(result)
 
 
 async def handle_view_plan() -> str:
     async with cl.Step(name="Reading edition plan", type="tool", icon="list", default_open=True) as step:
-        result = await run_cli("view-plan")
-        step.output = compact_output(result, 2400)
-    return format_plan(result)
+        try:
+            result = await run_cli("view-plan")
+            step.output = compact_output(result, 2400)
+        except Exception as exc:
+            result = {"error": str(exc)}
+            step.output = f"Failed: {str(exc)[:200]}"
+    return sanitise_response(format_plan(result))
 
 
 def format_plan(result: dict) -> str:
@@ -547,9 +765,7 @@ async def get_smart_draft_topics() -> str:
     """Pull topics from edition_topics + recent content_items for draft review."""
     try:
         from db.client import get_client
-        from datetime import datetime, timedelta
 
-        # Get active edition via run_cli (avoids brittle direct table queries)
         plan = {}
         try:
             plan = await run_cli("view-plan")
@@ -558,23 +774,24 @@ async def get_smart_draft_topics() -> str:
         edition_data = plan.get("edition", {})
         edition = edition_data.get("active_edition", "current")
         dom_topics = plan.get("topics") or []
-        # Only show unused topics for the current edition
         dom_topics = [t for t in dom_topics if not t.get("used")]
 
         supabase = get_client()
 
-        # Recent ingested content from the three sources (last 7 days)
         week_ago = (datetime.now() - timedelta(days=7)).isoformat()
-        recent = supabase.table("content_items") \
-            .select("title, source_name, raw_text, scraped_at") \
-            .in_("source_name", ["elenanisonoff", "TBPN", "All-In Podcast"]) \
-            .gte("scraped_at", week_ago) \
-            .order("scraped_at", desc=True) \
-            .limit(6) \
+        recent = (
+            supabase.table("content_items")
+            .select("title, source_name, raw_text, scraped_at")
+            .in_("source_name", ["elenanisonoff", "TBPN", "All-In Podcast"])
+            .gte("scraped_at", week_ago)
+            .order("scraped_at", desc=True)
+            .limit(6)
             .execute()
+        )
         recent_items = recent.data or []
 
-        lines = [f"Edition {edition} — draft review\n"]
+        today = datetime.now().strftime("%A %d %B %Y")
+        lines = [f"Edition {edition} — draft review", f"Today: {today}\n"]
 
         if dom_topics:
             lines.append(f"Your saved topics ({len(dom_topics)}):")
@@ -605,20 +822,13 @@ async def get_smart_draft_topics() -> str:
 
 
 async def handle_draft() -> str:
+    """
+    Draft initiation — show topic plan and wait for explicit approval.
+    NEVER generates content directly. That is on_confirm_draft's job.
+    """
     async with cl.Step(name="Loading topic plan", type="tool", icon="list", default_open=True) as step:
         topics_text = await get_smart_draft_topics()
-        # Also try run_cli for full plan data
-        try:
-            result = await run_cli("view-plan")
-            plan_data = result
-            step.output = compact_output(result, 2200)
-        except Exception as exc:
-            plan_data = {}
-            step.output = topics_text[:400]
-
-    topics = plan_data.get("topics") or []
-    if not topics and "No topics" in topics_text:
-        return "There is nothing to draft yet. Add the reporting targets first."
+        step.output = topics_text[:600]
 
     actions = [
         cl.Action(name="confirm_draft", payload={}, label="Yes, draft it", icon="check"),
@@ -631,9 +841,13 @@ async def handle_draft() -> str:
 
 async def handle_status() -> str:
     async with cl.Step(name="Checking system status", type="tool", icon="activity", default_open=True) as step:
-        result = await run_cli("status")
-        step.output = compact_output(result, 2200)
-    return format_tool_fallback(result)
+        try:
+            result = await run_cli("status")
+            step.output = compact_output(result, 2200)
+        except Exception as exc:
+            result = {"error": str(exc)}
+            step.output = f"Failed: {str(exc)[:200]}"
+    return sanitise_response(format_tool_fallback(result))
 
 
 async def handle_brief() -> str:
@@ -646,7 +860,7 @@ async def handle_brief() -> str:
         except Exception as exc:
             result = {"error": str(exc)}
             step.output = f"Failed: {str(exc)[:300]}"
-    return format_tool_fallback(result)
+    return sanitise_response(format_tool_fallback(result))
 
 
 async def handle_linkedin(text: str, history: list[dict]) -> str:
@@ -664,7 +878,114 @@ async def handle_linkedin(text: str, history: list[dict]) -> str:
         except Exception as exc:
             result = {"error": str(exc)}
             step.output = f"Failed: {str(exc)[:300]}"
-    return format_tool_fallback(result)
+    return sanitise_response(format_tool_fallback(result))
+
+
+async def handle_source_check(message: str, history: list[dict]) -> str:
+    """
+    When Dom asks about a specific source, query the DB and summarise.
+    Never refuse with "I cannot access TikTok/YouTube".
+    """
+    msg_lower = message.lower()
+
+    if any(x in msg_lower for x in ("elena", "elenanisonoff", "tiktok")):
+        source_name = "Elena TikTok"
+        source_id = "elenanisonoff"
+    elif "tbpn" in msg_lower:
+        source_name = "TBPN Podcast"
+        source_id = "TBPN"
+    else:
+        source_name = "All-In Podcast"
+        source_id = "All-In Podcast"
+
+    today = datetime.now().strftime("%A %d %B %Y")
+
+    async with cl.Step(
+        name=f"Checking {source_name}",
+        type="tool",
+        icon="video",
+        show_input=True,
+        default_open=True,
+    ) as step:
+        step.input = f"Latest from {source_name} — {today}"
+        try:
+            from db.client import get_client
+
+            supabase = get_client()
+            week_ago = (datetime.now() - timedelta(days=7)).isoformat()
+            recent = (
+                supabase.table("content_items")
+                .select("title, raw_text, published_at, scraped_at")
+                .eq("source_name", source_id)
+                .gte("scraped_at", week_ago)
+                .order("scraped_at", desc=True)
+                .limit(5)
+                .execute()
+            )
+            items = recent.data or []
+
+            if not items:
+                step.output = "Nothing in DB for past 7 days. Triggering fresh scrape..."
+                try:
+                    await run_cli("morning-brief", timeout=900)
+                    recent = (
+                        supabase.table("content_items")
+                        .select("title, raw_text, published_at, scraped_at")
+                        .eq("source_name", source_id)
+                        .gte("scraped_at", week_ago)
+                        .order("scraped_at", desc=True)
+                        .limit(5)
+                        .execute()
+                    )
+                    items = recent.data or []
+                except Exception:
+                    pass
+
+            if not items:
+                step.output = "No recent items found even after scrape."
+                return f"Nothing new from {source_name} in the past 7 days."
+
+            step.output = f"Found {len(items)} recent item(s) from {source_name}."
+            content_preview = "\n\n---\n\n".join(
+                f"Date: {item.get('scraped_at','')[:10]}\n{(item.get('raw_text') or '')[:400]}"
+                for item in items
+            )
+            summary = await run_hermes(
+                f"Today is {today}. Summarise the most recent and relevant content from "
+                f"{source_name} for a VC secondaries newsletter editor. "
+                f"Be specific about dates and topics covered. "
+                f"Identify the 2-3 most interesting angles for Dom's newsletter. "
+                f"Content:\n{content_preview}"
+            )
+            return sanitise_response(summary)
+
+        except Exception as exc:
+            step.output = f"Error: {str(exc)[:100]}"
+            return f"Could not check {source_name}: {str(exc)[:100]}"
+
+
+async def handle_model_switcher(text: str, command: str | None) -> None:
+    """Show the model selector with clickable action buttons."""
+    current_key = cl.user_session.get("selected_model", "hermes")
+    current = AVAILABLE_MODELS.get(current_key, AVAILABLE_MODELS["hermes"])
+
+    actions = []
+    for key, model in AVAILABLE_MODELS.items():
+        is_current = key == current_key
+        actions.append(
+            cl.Action(
+                name="switch_model",
+                payload={"model_key": key},
+                label=f"{'✓ ' if is_current else ''}{model['label']}",
+                tooltip=model["description"],
+            )
+        )
+
+    await cl.Message(
+        content=f"Current model: **{current['label']}**\n\nSelect a model:",
+        actions=actions,
+        author=AUTHOR,
+    ).send()
 
 
 async def handle_file_uploads(message: cl.Message) -> None:
@@ -678,40 +999,31 @@ async def handle_file_uploads(message: cl.Message) -> None:
             step.output = f"Attachment received. {Path(path).stat().st_size:,} bytes ready for analysis."
 
 
+# ── Main message handler ──────────────────────────────────────────────────────
+
 @cl.on_message
 async def on_message(message: cl.Message):
-    history = cl.user_session.get("history") or [{"role": "system", "content": SYSTEM_PROMPT}]
+    history = cl.user_session.get("history") or [{"role": "system", "content": get_herald_system()}]
+    # Refresh system prompt with current date on every turn
+    if history and history[0].get("role") == "system":
+        history[0]["content"] = get_herald_system()
+
     command = (message.command or "").lower() or None
     text = message.content.strip()
 
-    # Handle model switch command
-    if command == "model" or text.strip().lower().startswith("/model") or \
-            any(x in text.lower() for x in ("what model", "switch model", "change model", "which model")):
-        current = cl.user_session.get("selected_model", "openai/gpt-4o")
-        # Check if switching
-        arg = text.replace("/model", "").strip().lower()
-        if arg and arg in AVAILABLE_MODELS:
-            new_model = AVAILABLE_MODELS[arg]["id"]
-            cl.user_session.set("selected_model", new_model)
-            await cl.Message(
-                content=f"Switched to {AVAILABLE_MODELS[arg]['label']} (`{new_model}`)",
-                author=AUTHOR,
-            ).send()
-            return
-        model_list = "\n".join([
-            f"{'→ ' if v['id'] == current else '  '}{k}: {v['label']} — {v['description']}"
-            for k, v in AVAILABLE_MODELS.items()
-        ])
-        await cl.Message(
-            content=f"Current model: `{current}`\n\nAvailable:\n```\n{model_list}\n```\nType a model name to switch (e.g. `claude-sonnet`)",
-            author=AUTHOR,
-        ).send()
+    # Model switcher — early return, no history entry needed
+    if (
+        command == "model"
+        or text.lower().startswith("/model")
+        or any(x in text.lower() for x in ("what model", "switch model", "change model", "which model", "what model are you"))
+    ):
+        await handle_model_switcher(text, command)
         return
 
     if not cl.user_session.get("cross_thread_loaded"):
         cross_context = await get_cross_thread_context(text)
         if cross_context and history and history[0].get("role") == "system":
-            history[0]["content"] = f"{SYSTEM_PROMPT}\n\nPAST CONTEXT:\n{cross_context}"
+            history[0]["content"] = f"{get_herald_system()}\n\nPAST CONTEXT:\n{cross_context}"
             cl.user_session.set("history", history)
         cl.user_session.set("cross_thread_loaded", True)
 
@@ -757,6 +1069,8 @@ async def on_message(message: cl.Message):
             response = await handle_brief()
         elif intent_key == "linkedin":
             response = await handle_linkedin(text, history)
+        elif intent_key in ("tiktok_check", "source_latest"):
+            response = await handle_source_check(text, history)
         else:
             response = await analyse_with_hermes(text, history)
     except Exception as exc:
@@ -768,6 +1082,24 @@ async def on_message(message: cl.Message):
         {"role": "assistant", "content": response},
     ])
     cl.user_session.set("history", history[-30:])
+
+
+# ── Action callbacks ──────────────────────────────────────────────────────────
+
+@cl.action_callback("switch_model")
+async def on_switch_model(action):
+    model_key = action.payload.get("model_key", "hermes")
+    model = AVAILABLE_MODELS.get(model_key)
+    if not model:
+        await cl.Message(content="Unknown model.", author=AUTHOR).send()
+        return
+
+    cl.user_session.set("selected_model", model_key)
+    await cl.Message(
+        content=f"Switched to {model['label']}. {model['description']}.",
+        author=AUTHOR,
+    ).send()
+    await action.remove()
 
 
 @cl.action_callback("confirm_draft")
@@ -783,13 +1115,20 @@ async def on_confirm_draft(action):
 
             result = await draft_full_weekly_newsletter("Dom approved the Chainlit edition plan")
             step.output = compact_output(result)
-            response = result.get("note") or "Newsletter generation started."
+            html_content = result.get("html") or result.get("html_content") or ""
+            response = result.get("note") or "Newsletter generation complete."
         except Exception as exc:
             step.output = f"Failed: {str(exc)[:300]}"
+            result = {}
+            html_content = ""
             response = f"The draft pipeline could not start: {str(exc)[:220]}"
+
     await stream_response(response)
     cl.user_session.set("awaiting_draft_approval", False)
     await action.remove()
+
+    if html_content:
+        await show_html_preview(html_content, "Newsletter Draft")
 
 
 @cl.action_callback("continue_editing")
@@ -802,14 +1141,45 @@ async def on_continue_editing(action):
     await action.remove()
 
 
+@cl.action_callback("export_html")
+async def on_export_html(action):
+    path = action.payload.get("html_path", "")
+    filename = action.payload.get("filename", "herald_newsletter.html")
+    if path and Path(path).exists():
+        await cl.Message(
+            content="HTML file ready:",
+            elements=[cl.File(name=filename, path=path, display="inline")],
+            author=AUTHOR,
+        ).send()
+    else:
+        await cl.Message(content="HTML file not found — the preview may have expired.", author=AUTHOR).send()
+    await action.remove()
+
+
+@cl.action_callback("edit_newsletter_content")
+async def on_edit_newsletter(action):
+    await cl.Message(
+        content=(
+            "What would you like to change? Tell me in plain text.\n\n"
+            "Examples: 'Change the headline to...' / 'Remove the section about...' / 'Make the tone more concise'"
+        ),
+        author=AUTHOR,
+    ).send()
+    await action.remove()
+
+
 @cl.action_callback("download_html")
 async def on_download(action):
     async with cl.Step(name="Preparing HTML file", type="tool", icon="download") as step:
-        result = await run_cli("download-html")
-        step.output = compact_output(result)
-    if result.get("found") and Path(result["filename"]).exists():
+        try:
+            result = await run_cli("download-html")
+            step.output = compact_output(result)
+        except Exception as exc:
+            result = {"error": str(exc)}
+            step.output = f"Failed: {str(exc)[:200]}"
+    if result.get("found") and Path(result.get("filename", "")).exists():
         await cl.Message(
-            content=f"HTML ready: {result['subject']}",
+            content=f"HTML ready: {result.get('subject', '')}",
             elements=[cl.File(name=Path(result["filename"]).name, path=result["filename"], display="inline")],
             author=AUTHOR,
         ).send()
@@ -821,10 +1191,14 @@ async def on_download(action):
 @cl.action_callback("approve_newsletter")
 async def on_approve(action):
     async with cl.Step(name="Publishing to Beehiiv", type="tool", icon="send", default_open=True) as step:
-        result = await run_cli("publish-latest")
-        step.output = compact_output(result)
+        try:
+            result = await run_cli("publish-latest")
+            step.output = compact_output(result)
+        except Exception as exc:
+            result = {"error": str(exc)}
+            step.output = f"Failed: {str(exc)[:200]}"
     text = "Published to Beehiiv." if result.get("success") else f"Publish failed: {result.get('error') or result.get('note')}"
-    await cl.Message(content=text, author=AUTHOR).send()
+    await cl.Message(content=sanitise_response(text), author=AUTHOR).send()
     await action.remove()
 
 

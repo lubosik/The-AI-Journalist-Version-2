@@ -512,3 +512,82 @@ a[href*="chainlit.io"],
   opacity: 0 !important;
   pointer-events: none !important;
 }
+
+/* ── Orbital deduplication — suppress any orbital inside starters wrapper ── */
+[class*="starter"] #herald-orbital-empty,
+[class*="starters"] #herald-orbital-empty,
+[class*="suggestion"] #herald-orbital-empty {
+  display: none !important;
+}
+
+/* ── HTML newsletter preview panel ── */
+.herald-preview-iframe {
+  border: 1px solid rgba(201, 168, 76, 0.3);
+  border-radius: 12px;
+  overflow: hidden;
+  margin: 8px 0;
+}
+.herald-preview-iframe iframe {
+  width: 100%;
+  height: 540px;
+  border: none;
+  background: white;
+  display: block;
+}
+
+/* ── Mobile optimisation ── */
+@media (max-width: 768px) {
+  /* Larger touch targets */
+  button,
+  [class*="action"],
+  [class*="chip"] {
+    min-height: 44px !important;
+    min-width: 44px !important;
+  }
+
+  /* Full width messages */
+  [class*="user-message"],
+  [class*="assistant-message"] {
+    max-width: 95% !important;
+  }
+
+  /* Bigger input — 16px prevents iOS auto-zoom */
+  textarea,
+  [role="textbox"] {
+    min-height: 52px !important;
+    font-size: 16px !important;
+  }
+
+  /* Action buttons stack vertically */
+  [class*="actions-container"] {
+    flex-direction: column !important;
+    gap: 8px !important;
+  }
+
+  /* Compact orbital on mobile */
+  .herald-h { font-size: 40px !important; }
+  .herald-orbital-wrapper { width: 90px !important; height: 90px !important; }
+  .herald-ring-1 { width: 68px !important; height: 68px !important; }
+  .herald-ring-2 { width: 80px !important; height: 80px !important; }
+  .herald-ring-3 { width: 90px !important; height: 90px !important; }
+
+  /* Command bar wraps on mobile */
+  [class*="command-bar"] {
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+  }
+
+  /* Step indicators compact */
+  [class*="step"] {
+    font-size: 11px !important;
+    padding: 7px 12px !important;
+  }
+}
+
+/* iOS safe area — notch / home indicator */
+@supports (padding: max(0px)) {
+  [class*="input-area"],
+  footer {
+    padding-bottom: max(16px, env(safe-area-inset-bottom)) !important;
+  }
+}

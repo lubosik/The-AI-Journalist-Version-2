@@ -1,0 +1,20 @@
+{
+  "name": "HERALD Intelligence",
+  "short_name": "HERALD",
+  "description": "VC Secondaries AI Journalist",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#07070f",
+  "theme_color": "#c9a84c",
+  "orientation": "portrait-primary",
+  "lang": "en-GB",
+  "categories": ["productivity", "news"],
+  "icons": [
+    {
+      "src": "/public/herald-logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

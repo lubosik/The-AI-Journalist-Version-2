@@ -76,10 +76,14 @@
   }
 
   function injectOrbital() {
+    // DOM is the source of truth — prevents duplicate injection across MutationObserver firings
+    if (document.getElementById('herald-orbital-empty')) return;
     if (_orbitalInjected) return;
     if (hasMessages()) return;
     var area = findChatArea();
     if (!area) return;
+    // Do not inject inside a starters/suggestions container
+    if (area.className && /starter|starters|suggestion/i.test(area.className)) return;
     area.appendChild(createOrbital());
     _orbitalInjected = true;
   }
@@ -153,5 +157,36 @@
     _orbitalInjected = false;
     setTimeout(init, 200);
   });
+
+  /* ── PWA: manifest + service worker ── */
+  function addPWAMeta() {
+    var metas = [
+      ['apple-mobile-web-app-capable', 'yes'],
+      ['apple-mobile-web-app-status-bar-style', 'black-translucent'],
+      ['apple-mobile-web-app-title', 'HERALD'],
+      ['theme-color', '#c9a84c'],
+      ['mobile-web-app-capable', 'yes'],
+    ];
+    metas.forEach(function (pair) {
+      if (!document.querySelector('meta[name="' + pair[0] + '"]')) {
+        var meta = document.createElement('meta');
+        meta.name = pair[0];
+        meta.content = pair[1];
+        document.head.appendChild(meta);
+      }
+    });
+    if (!document.querySelector('link[rel="manifest"]')) {
+      var link = document.createElement('link');
+      link.rel = 'manifest';
+      link.href = '/public/manifest.json';
+      document.head.appendChild(link);
+    }
+  }
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/public/sw.js').catch(function () {});
+  }
+
+  addPWAMeta();
 
 })();
