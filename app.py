@@ -93,8 +93,10 @@ async def on_app_startup():
     schema_sql = (ROOT / "schema.sql").read_text()
     engine = create_async_engine(_db_uri)
     try:
+        statements = [s.strip() for s in schema_sql.split(";") if s.strip()]
         async with engine.begin() as conn:
-            await conn.execute(sqlalchemy.text(schema_sql))
+            for stmt in statements:
+                await conn.execute(sqlalchemy.text(stmt))
         print("[HERALD] Schema bootstrap complete.")
     except Exception as e:
         print(f"[HERALD] Schema bootstrap warning: {e}")
@@ -137,7 +139,7 @@ AVAILABLE_MODELS = {
     "hermes": {"id": "openai/gpt-4o", "label": "Hermes (Default)", "description": "Your default model — recommended"},
     "gpt-4o": {"id": "openai/gpt-4o", "label": "GPT-4o", "description": "Fast and powerful"},
     "claude-sonnet": {"id": "anthropic/claude-sonnet-4-5", "label": "Claude Sonnet", "description": "Best for writing"},
-    "claude-opus": {"id": "anthropic/claude-opus-4-6", "label": "Claude Opus", "description": "Most capable"},
+    "claude-opus": {"id": "anthropic/claude-opus-4-5", "label": "Claude Opus", "description": "Most capable"},
     "gemini-flash": {"id": "google/gemini-flash-1.5", "label": "Gemini Flash", "description": "Fastest"},
     "perplexity": {"id": "perplexity/sonar-pro", "label": "Perplexity Sonar", "description": "Live web search"},
 }

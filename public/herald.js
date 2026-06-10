@@ -193,7 +193,8 @@
     if (!sidebar) return;
     if (hasThreadItems(sidebar)) {
       removeSidebarEmptyState();
-    } else if (hasSidebarError(sidebar) || !hasThreadItems(sidebar)) {
+    } else if (!hasSidebarError(sidebar)) {
+      // Only inject empty state when not loading — hasSidebarError detects active spinners
       injectSidebarEmptyState();
     }
   }
