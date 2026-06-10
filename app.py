@@ -24,7 +24,11 @@ sys.path.insert(0, "/root/herald-v2")
 # Chainlit persistence enables thread history, new chat, and resume.
 _db_uri = os.getenv("SUPABASE_DB_URI_ASYNC") or os.getenv("SUPABASE_DB_URI", "")
 if _db_uri and "+asyncpg" not in _db_uri:
-    _db_uri = _db_uri.replace("postgresql://", "postgresql+asyncpg://", 1)
+    # Normalise both postgres:// and postgresql:// to postgresql+asyncpg://
+    _db_uri = re.sub(r"^postgres(ql)?://", "postgresql+asyncpg://", _db_uri)
+# Supabase requires SSL — add sslmode=require if not already present
+if _db_uri and "sslmode" not in _db_uri and "ssl=" not in _db_uri:
+    _db_uri += "?sslmode=require" if "?" not in _db_uri else "&sslmode=require"
 
 
 class HeraldSQLAlchemyDataLayer(SQLAlchemyDataLayer):
@@ -90,18 +94,28 @@ async def on_app_startup():
         return
     import sqlalchemy
     from sqlalchemy.ext.asyncio import create_async_engine
-    schema_sql = (ROOT / "schema.sql").read_text()
-    engine = create_async_engine(_db_uri)
-    try:
-        statements = [s.strip() for s in schema_sql.split(";") if s.strip()]
-        async with engine.begin() as conn:
+
+    async def _run_schema():
+        schema_sql = (ROOT / "schema.sql").read_text()
+        engine = create_async_engine(_db_uri, connect_args={"ssl": "require"})
+        try:
+            statements = [s.strip() for s in schema_sql.split(";") if s.strip()]
             for stmt in statements:
-                await conn.execute(sqlalchemy.text(stmt))
-        print("[HERALD] Schema bootstrap complete.")
+                try:
+                    async with engine.begin() as conn:
+                        await conn.execute(sqlalchemy.text(stmt))
+                except Exception as stmt_err:
+                    print(f"[HERALD] Schema stmt warning: {stmt_err}")
+            print("[HERALD] Schema bootstrap complete.")
+        finally:
+            await engine.dispose()
+
+    try:
+        await asyncio.wait_for(_run_schema(), timeout=15)
+    except asyncio.TimeoutError:
+        print("[HERALD] Schema bootstrap timed out — continuing startup anyway.")
     except Exception as e:
         print(f"[HERALD] Schema bootstrap warning: {e}")
-    finally:
-        await engine.dispose()
 
 
 AUTHOR = "HERALD"

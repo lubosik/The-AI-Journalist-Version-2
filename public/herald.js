@@ -222,8 +222,15 @@
       syncSidebar();
       startObserver();
     }, 150);
-    // Re-check sidebar after a longer delay to catch post-render empty states
+    // Re-check sidebar after short delay
     setTimeout(syncSidebar, 1500);
+    // Force empty state after 6s if sidebar is still spinning (DB unreachable)
+    setTimeout(function () {
+      var sidebar = findSidebar();
+      if (sidebar && !hasThreadItems(sidebar) && !document.getElementById('herald-sidebar-empty')) {
+        injectSidebarEmptyState();
+      }
+    }, 6000);
   }
 
   if (document.readyState === 'loading') {

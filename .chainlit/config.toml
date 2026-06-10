@@ -17,7 +17,7 @@ favorites = false
 
 [features.spontaneous_file_upload]
 enabled = true
-accept = ["*/*"]
+accept = ["text/plain", "text/csv", "text/html", "application/pdf", "application/json", "image/png", "image/jpeg", "image/gif", "image/webp"]
 max_files = 5
 max_size_mb = 50
 
