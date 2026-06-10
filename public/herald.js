@@ -26,7 +26,7 @@
         if (!h.nextElementSibling || !h.nextElementSibling.classList.contains('herald-login-subtitle')) {
           var sub = document.createElement('p');
           sub.className = 'herald-login-subtitle';
-          sub.textContent = 'Private intelligence workspace';
+          sub.textContent = 'Login to access your private intelligence workspace';
           sub.style.cssText = 'font-size:14px;color:#9a9488;margin:4px 0 0;';
           h.insertAdjacentElement('afterend', sub);
         }
