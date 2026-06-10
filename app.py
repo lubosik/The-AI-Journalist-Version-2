@@ -47,17 +47,39 @@ class HeraldSQLAlchemyDataLayer(SQLAlchemyDataLayer):
 
     async def get_user(self, identifier: str):
         """Get user, auto-creating on first login so the thread endpoint never 404s."""
-        from chainlit.user import User
         try:
             result = await super().get_user(identifier)
             if result is not None:
                 return result
             # First login — upsert a minimal user record so Chainlit can attach threads.
-            return await self.create_user(User(identifier=identifier, metadata={}))
+            # NOTE: We call _herald_create_user (not self.create_user) because
+            # SQLAlchemyDataLayer.create_user internally calls self.get_user, which
+            # routes back here and causes infinite recursion.
+            return await self._herald_create_user(identifier)
         except Exception as exc:
             print(f"[HERALD] get_user failed for '{identifier}': {exc}")
-            # Return None rather than raising — Chainlit handles a missing user gracefully.
             return None
+
+    async def _herald_create_user(self, identifier: str):
+        """Insert a new user row without calling self.get_user (avoids recursion)."""
+        import uuid
+        from datetime import timezone
+        try:
+            await self.execute_sql(
+                'INSERT INTO users ("id", "identifier", "createdAt", "metadata") '
+                'VALUES (:id, :identifier, :createdAt, :metadata) '
+                'ON CONFLICT ("identifier") DO NOTHING',
+                {
+                    "id": str(uuid.uuid4()),
+                    "identifier": identifier,
+                    "createdAt": datetime.now(timezone.utc).isoformat(),
+                    "metadata": "{}",
+                },
+            )
+        except Exception as exc:
+            print(f"[HERALD] _herald_create_user insert warning for '{identifier}': {exc}")
+        # Use parent's get_user directly — bypasses this override, no recursion.
+        return await super().get_user(identifier)
 
     async def get_thread_author(self, thread_id: str) -> str | None:
         """Override to return None safely instead of raising when thread is not found."""
