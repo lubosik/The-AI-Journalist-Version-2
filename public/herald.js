@@ -60,8 +60,7 @@
     return (
       document.querySelector('[class*="message-container"]') ||
       document.querySelector('[class*="chat-messages"]') ||
-      document.querySelector('[class*="messages-list"]') ||
-      document.querySelector('main')
+      document.querySelector('[class*="messages-list"]')
     );
   }
 

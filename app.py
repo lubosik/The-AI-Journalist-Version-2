@@ -42,6 +42,15 @@ class HeraldSQLAlchemyDataLayer(SQLAlchemyDataLayer):
         step_dict.pop("autoCollapse", None)
         await super().create_step(step_dict)
 
+    async def get_user(self, identifier: str):
+        """Get user, auto-creating on first login so the thread endpoint never 404s."""
+        from chainlit.user import User
+        result = await super().get_user(identifier)
+        if result is not None:
+            return result
+        # First login — upsert a minimal user record so Chainlit can attach threads.
+        return await self.create_user(User(identifier=identifier, metadata={}))
+
 
 @cl.data_layer
 def get_data_layer():
