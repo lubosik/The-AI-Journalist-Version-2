@@ -26,9 +26,23 @@ _db_uri = os.getenv("SUPABASE_DB_URI_ASYNC") or os.getenv("SUPABASE_DB_URI", "")
 if _db_uri and "+asyncpg" not in _db_uri:
     # Normalise both postgres:// and postgresql:// to postgresql+asyncpg://
     _db_uri = re.sub(r"^postgres(ql)?://", "postgresql+asyncpg://", _db_uri)
-# Supabase requires SSL — add sslmode=require if not already present
-if _db_uri and "sslmode" not in _db_uri and "ssl=" not in _db_uri:
-    _db_uri += "?sslmode=require" if "?" not in _db_uri else "&sslmode=require"
+if _db_uri:
+    # asyncpg does not accept libpq-style sslmode/ssl URL params — SQLAlchemy
+    # forwards query params straight to asyncpg.connect(), which then raises
+    # "connect() got an unexpected keyword argument 'sslmode'". Strip them from
+    # the URI and pass SSL via connect_args instead.
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+    _parts = urlsplit(_db_uri)
+    _query = [(k, v) for k, v in parse_qsl(_parts.query) if k not in ("sslmode", "ssl")]
+    _db_uri = urlunsplit(_parts._replace(query=urlencode(_query)))
+
+# Supabase requires SSL; "require" is understood natively by asyncpg.
+_db_connect_args: dict = {"ssl": "require"}
+# Supabase's transaction pooler (port 6543, pgbouncer) breaks asyncpg's
+# prepared-statement cache — disable it there.
+if ":6543" in _db_uri:
+    _db_connect_args["statement_cache_size"] = 0
 
 
 class HeraldSQLAlchemyDataLayer(SQLAlchemyDataLayer):
@@ -106,7 +120,7 @@ class HeraldSQLAlchemyDataLayer(SQLAlchemyDataLayer):
 def get_data_layer():
     if not _db_uri:
         return None
-    return HeraldSQLAlchemyDataLayer(conninfo=_db_uri)
+    return HeraldSQLAlchemyDataLayer(conninfo=_db_uri, connect_args=_db_connect_args)
 
 
 @cl.on_app_startup
@@ -119,7 +133,7 @@ async def on_app_startup():
 
     async def _run_schema():
         schema_sql = (ROOT / "schema.sql").read_text()
-        engine = create_async_engine(_db_uri, connect_args={"ssl": "require"})
+        engine = create_async_engine(_db_uri, connect_args=_db_connect_args)
         try:
             statements = [s.strip() for s in schema_sql.split(";") if s.strip()]
             for stmt in statements:
