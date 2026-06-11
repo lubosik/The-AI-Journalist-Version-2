@@ -4,7 +4,7 @@ TIKTOK_PROFILES = [
 
 YOUTUBE_CHANNELS = [
     {"name": "TBPN", "handle": "@TBPNLive", "url": "https://www.youtube.com/@TBPNLive"},
-    {"name": "All-In Podcast", "handle": "@allinpodcast", "url": "https://www.youtube.com/@allinpodcast"},
+    {"name": "All-In Podcast", "handle": "@allin", "url": "https://www.youtube.com/@allin"},
 ]
 
 TWITTER_ACCOUNTS = []

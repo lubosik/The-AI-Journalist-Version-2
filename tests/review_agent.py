@@ -14,7 +14,7 @@ from pathlib import Path
 
 from playwright.async_api import Page, async_playwright
 
-HERALD_URL = "http://localhost:8002"
+HERALD_URL = os.getenv("HERALD_URL", "http://localhost:8002")
 SCREENSHOTS_DIR = Path("/root/herald-v2/tests/screenshots")
 SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
 

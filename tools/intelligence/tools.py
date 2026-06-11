@@ -940,6 +940,8 @@ _pipeline_state: dict = {
     "trigger_reason": "",
     "task": None,         # asyncio.Task handle so cancel_pipeline can kill it
     "issue_id": None,     # newsletter_issues row created by the pipeline
+    "last_issue_id": None,
+    "issue_future": None,
 }
 
 # One-slot queue: if a pipeline is already running when Dom requests another,
@@ -969,6 +971,10 @@ def register_pipeline_issue_id(issue_id: str) -> None:
     can mark the right issue as cancelled."""
     if _pipeline_state.get("running"):
         _pipeline_state["issue_id"] = issue_id
+        _pipeline_state["last_issue_id"] = issue_id
+        issue_future = _pipeline_state.get("issue_future")
+        if issue_future and not issue_future.done():
+            issue_future.set_result(issue_id)
 
 
 async def cancel_pipeline(reason: str = "") -> dict:
@@ -1001,9 +1007,13 @@ async def cancel_pipeline(reason: str = "") -> dict:
 async def get_pipeline_status() -> dict:
     """Return whether the newsletter pipeline is currently running, and how long left."""
     if not _pipeline_state["running"]:
-        return {"running": False}
+        return {
+            "running": False,
+            "issue_id": _pipeline_state.get("last_issue_id"),
+        }
     return {
         "running": True,
+        "issue_id": _pipeline_state.get("issue_id"),
         "started_at": _pipeline_state["started_at"],
         "trigger_reason": _pipeline_state["trigger_reason"],
         "eta_remaining": _pipeline_eta_remaining(_pipeline_state["started_at"]),
@@ -1011,7 +1021,11 @@ async def get_pipeline_status() -> dict:
     }
 
 
-async def draft_full_weekly_newsletter(trigger_reason: str = "", issue_number: int | None = None) -> dict:
+async def draft_full_weekly_newsletter(
+    trigger_reason: str = "",
+    issue_number: int | None = None,
+    return_issue_handle: bool = False,
+) -> dict:
     """
     Kick off the full Mon-Thu newsletter pipeline as a background task.
 
@@ -1029,6 +1043,7 @@ async def draft_full_weekly_newsletter(trigger_reason: str = "", issue_number: i
       {"started": False, "already_running": True, ...}  — duplicate request
     """
     import asyncio as _asyncio
+    issue_future = None
 
     if _pipeline_state["running"]:
         logger.info(
@@ -1078,6 +1093,8 @@ async def draft_full_weekly_newsletter(trigger_reason: str = "", issue_number: i
             except Exception:
                 pass
         finally:
+            if issue_future and not issue_future.done():
+                issue_future.set_result(None)
             _pipeline_state["running"] = False
             _pipeline_state["started_at"] = None
             _pipeline_state["trigger_reason"] = ""
@@ -1097,24 +1114,33 @@ async def draft_full_weekly_newsletter(trigger_reason: str = "", issue_number: i
         _pipeline_state["running"] = True
         _pipeline_state["started_at"] = datetime.now(timezone.utc).isoformat()
         _pipeline_state["trigger_reason"] = trigger_reason[:200]
+        _pipeline_state["last_issue_id"] = None
+        issue_future = _asyncio.get_running_loop().create_future()
+        _pipeline_state["issue_future"] = issue_future
         task = _asyncio.create_task(_run())
         _pipeline_state["task"] = task
         logger.info(
             f"draft_full_weekly_newsletter kicked off in background "
             f"(trigger_reason={trigger_reason[:120]!r})"
         )
-        return {
+        response = {
             "started": True,
             "eta_minutes": "3-6",
             "trigger_reason": trigger_reason[:200],
             "delivery": "Telegram — HTML attachment plus Approve / Request Edits / Discard buttons",
             "note": "Dom can keep chatting normally while this runs. The draft arrives on its own when complete.",
         }
+        if return_issue_handle:
+            response["_issue_future"] = issue_future
+            response["_task"] = task
+        return response
     except Exception as exc:
         # Reset flag if dispatch failed
         _pipeline_state["running"] = False
         _pipeline_state["started_at"] = None
         _pipeline_state["trigger_reason"] = ""
+        if issue_future and not issue_future.done():
+            issue_future.set_result(None)
         logger.error(f"draft_full_weekly_newsletter dispatch error: {exc}")
         return {"started": False, "error": str(exc)[:300]}
 
@@ -1652,5 +1678,3 @@ async def resend_draft_preview() -> dict:
     except Exception as e:
         logger.error(f"resend_draft_preview error: {e}", exc_info=True)
         return {"success": False, "note": "Couldn't resend the draft — check the logs."}
-
-

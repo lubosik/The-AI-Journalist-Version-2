@@ -262,6 +262,7 @@ async def save_topic(args) -> dict:
 
 
 async def morning_brief() -> dict:
+    from config import YOUTUBE_CHANNELS
     from ingestion.tiktok import ingest_tiktok_profile
     from ingestion.youtube import ingest_youtube_channel
 
@@ -269,17 +270,10 @@ async def morning_brief() -> dict:
     results["Elena TikTok"] = await ingest_tiktok_profile(
         "elenanisonoff", is_voice_sample=True, results_limit=30
     )
-    results["TBPN"] = await ingest_youtube_channel(
-        {"name": "TBPN", "handle": "@TBPNLive", "url": "https://www.youtube.com/@TBPNLive"},
-        max_videos=3,
-    )
+    channels = {channel["name"]: channel for channel in YOUTUBE_CHANNELS}
+    results["TBPN"] = await ingest_youtube_channel(channels["TBPN"], max_videos=3)
     results["All-In"] = await ingest_youtube_channel(
-        {
-            "name": "All-In Podcast",
-            "handle": "@allinpodcast",
-            "url": "https://www.youtube.com/@allinpodcast",
-        },
-        max_videos=3,
+        channels["All-In Podcast"], max_videos=3
     )
     return {"sources": results, "new_items": sum(results.values())}
 
@@ -379,13 +373,33 @@ async def download_html() -> dict:
     }
 
 
-async def publish_latest() -> dict:
+async def publish_issue(issue_id: str = "") -> dict:
+    from db.client import get_client
     from db.queries import get_latest_newsletter_issue, update_newsletter_issue
     from newsletter.beehiiv import publish_post
 
-    issue = get_latest_newsletter_issue()
+    if issue_id:
+        result = (
+            get_client()
+            .table("newsletter_issues")
+            .select("*")
+            .eq("id", issue_id)
+            .limit(1)
+            .execute()
+        )
+        issue = result.data[0] if result.data else None
+    else:
+        issue = get_latest_newsletter_issue()
     if not issue:
         return {"success": False, "error": "No newsletter issue found"}
+    if issue.get("status") != "draft":
+        return {
+            "success": False,
+            "error": (
+                f"Issue {issue.get('issue_number', issue_id)} is "
+                f"{issue.get('status') or 'not publishable'}"
+            ),
+        }
     post_id = issue.get("beehiiv_post_id")
     if not post_id:
         return {"success": False, "error": "Latest issue has no Beehiiv draft ID"}
@@ -521,7 +535,8 @@ def parser() -> argparse.ArgumentParser:
     linkedin_parser = commands.add_parser("linkedin")
     linkedin_parser.add_argument("topic")
     commands.add_parser("download-html")
-    commands.add_parser("publish-latest")
+    publish = commands.add_parser("publish-issue")
+    publish.add_argument("issue_id")
     commands.add_parser("draft-context")
     draft = commands.add_parser("save-draft")
     draft.add_argument("path")
@@ -541,7 +556,7 @@ async def main() -> None:
         "find-transcript": lambda: find_transcript(args),
         "linkedin": lambda: linkedin(args),
         "download-html": download_html,
-        "publish-latest": publish_latest,
+        "publish-issue": lambda: publish_issue(args.issue_id),
         "draft-context": draft_context,
         "save-draft": lambda: save_draft(args.path, args.push_to_beehiiv),
     }

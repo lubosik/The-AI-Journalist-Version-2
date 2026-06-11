@@ -169,6 +169,18 @@ async def ingest_youtube_channel(channel: dict, max_videos: int = 5) -> int:
         update_source_last_scraped("youtube", channel_name)
         return 0
 
+    recent_items = sorted(
+        recent_items,
+        key=lambda item: _parse_youtube_date(
+            item.get("date")
+            or item.get("publishedAt")
+            or item.get("publishDate")
+            or item.get("uploadDate")
+        )
+        or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )[:max_videos]
+
     logger.info(f"YouTube {channel_name}: {len(recent_items)} recent videos to process")
 
     # Collect video URLs for transcript fetching

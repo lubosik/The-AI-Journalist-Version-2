@@ -6,12 +6,14 @@ import json
 import os
 import re
 import sys
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import chainlit as cl
 from chainlit.data.sql_alchemy import SQLAlchemyDataLayer
+from chainlit.user import PersistedUser
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent
@@ -21,26 +23,11 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, "/root/herald-v2/tools")
 sys.path.insert(0, "/root/herald-v2")
 
+from db.schema import ensure_application_schema, normalise_async_database_url
+
 # Chainlit persistence enables thread history, new chat, and resume.
-_db_uri = os.getenv("SUPABASE_DB_URI_ASYNC") or os.getenv("SUPABASE_DB_URI", "")
-if _db_uri and "+asyncpg" not in _db_uri:
-    # Normalise both postgres:// and postgresql:// to postgresql+asyncpg://
-    _db_uri = re.sub(r"^postgres(ql)?://", "postgresql+asyncpg://", _db_uri)
-if _db_uri:
-    # asyncpg does not accept libpq-style sslmode/ssl URL params — SQLAlchemy
-    # forwards query params straight to asyncpg.connect(), which then raises
-    # "connect() got an unexpected keyword argument 'sslmode'". Strip them from
-    # the URI and pass SSL via connect_args instead.
-    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-
-    _parts = urlsplit(_db_uri)
-    _query = [(k, v) for k, v in parse_qsl(_parts.query) if k not in ("sslmode", "ssl")]
-    _db_uri = urlunsplit(_parts._replace(query=urlencode(_query)))
-
-# Supabase requires SSL; "require" is understood natively by asyncpg.
-_db_connect_args: dict = {"ssl": "require"}
-# Supabase's transaction pooler (port 6543, pgbouncer) breaks asyncpg's
-# prepared-statement cache — disable it there.
+_raw_db_uri = os.getenv("SUPABASE_DB_URI_ASYNC") or os.getenv("SUPABASE_DB_URI", "")
+_db_uri, _db_connect_args = normalise_async_database_url(_raw_db_uri)
 if ":6543" in _db_uri:
     _db_connect_args["statement_cache_size"] = 0
 
@@ -62,38 +49,139 @@ class HeraldSQLAlchemyDataLayer(SQLAlchemyDataLayer):
     async def get_user(self, identifier: str):
         """Get user, auto-creating on first login so the thread endpoint never 404s."""
         try:
-            result = await super().get_user(identifier)
+            result = await self._get_herald_user(identifier)
+            if result is None:
+                await self._herald_create_user(identifier)
+                result = await self._get_herald_user(identifier)
             if result is not None:
                 return result
-            # First login — upsert a minimal user record so Chainlit can attach threads.
-            # NOTE: We call _herald_create_user (not self.create_user) because
-            # SQLAlchemyDataLayer.create_user internally calls self.get_user, which
-            # routes back here and causes infinite recursion.
-            return await self._herald_create_user(identifier)
         except Exception as exc:
             print(f"[HERALD] get_user failed for '{identifier}': {exc}")
-            return None
+        result = await self._get_rest_user(identifier)
+        return result or self._get_configured_user(identifier)
 
-    async def _herald_create_user(self, identifier: str):
-        """Insert a new user row without calling self.get_user (avoids recursion)."""
-        import uuid
+    @staticmethod
+    def _get_configured_user(identifier: str):
+        """Keep the two credential accounts stable when persistence is unavailable."""
+        configured_users = {
+            "dom": {
+                "id": os.getenv(
+                    "HERALD_DOM_USER_ID",
+                    "cb374b41-9527-4246-a1ac-3fe232bf42a3",
+                ),
+                "role": "client",
+            },
+            "lubosi": {
+                "id": os.getenv(
+                    "HERALD_ADMIN_USER_ID",
+                    "3bec7534-cbaf-4b08-8469-b64275795177",
+                ),
+                "role": "admin",
+            },
+        }
+        account = configured_users.get(identifier)
+        if not account:
+            return None
+        return PersistedUser(
+            id=account["id"],
+            identifier=identifier,
+            createdAt="2026-06-09T00:00:00Z",
+            metadata={
+                "role": account["role"],
+                "provider": "credentials",
+                "persistence": "configured-fallback",
+            },
+        )
+
+    async def _get_herald_user(self, identifier: str):
+        """Read a user with explicit casts so UUID/timestamp schemas stay compatible."""
+        rows = await self.execute_sql(
+            'SELECT "id"::text AS "id", "identifier", '
+            '"createdAt"::text AS "createdAt", "metadata" '
+            'FROM users WHERE "identifier" = :identifier LIMIT 1',
+            {"identifier": identifier},
+        )
+        if not rows or not isinstance(rows, list):
+            return None
+        row = rows[0]
+        metadata = row.get("metadata") or {}
+        if isinstance(metadata, str):
+            metadata = json.loads(metadata)
+        return PersistedUser(
+            id=str(row["id"]),
+            identifier=str(row["identifier"]),
+            createdAt=str(row["createdAt"]),
+            metadata=metadata,
+        )
+
+    async def _herald_create_user(self, identifier: str) -> None:
+        """Insert a new user row without recursing through Chainlit's helper."""
         from datetime import timezone
+        role = "admin" if identifier == "lubosi" else "client"
+        await self.execute_sql(
+            'INSERT INTO users ("id", "identifier", "createdAt", "metadata") '
+            'VALUES (:id, :identifier, :createdAt, CAST(:metadata AS jsonb)) '
+            'ON CONFLICT ("identifier") DO NOTHING',
+            {
+                "id": str(uuid.uuid4()),
+                "identifier": identifier,
+                "createdAt": datetime.now(timezone.utc).isoformat(),
+                "metadata": json.dumps(
+                    {"role": role, "provider": "credentials"}
+                ),
+            },
+        )
+
+    async def _get_rest_user(self, identifier: str):
+        """Fallback to Supabase REST when Railway's direct SQL URI is unavailable."""
+        from datetime import timezone
+        from db.client import get_client
+
+        role = "admin" if identifier == "lubosi" else "client"
+
+        def fetch_or_create():
+            client = get_client()
+            result = (
+                client.table("users")
+                .select("id,identifier,metadata,createdAt")
+                .eq("identifier", identifier)
+                .limit(1)
+                .execute()
+            )
+            if result.data:
+                return result.data[0]
+            user_id = str(uuid.uuid4())
+            created_at = datetime.now(timezone.utc).isoformat()
+            inserted = (
+                client.table("users")
+                .insert(
+                    {
+                        "id": user_id,
+                        "identifier": identifier,
+                        "createdAt": created_at,
+                        "metadata": {
+                            "role": role,
+                            "provider": "credentials",
+                        },
+                    }
+                )
+                .execute()
+            )
+            return inserted.data[0] if inserted.data else None
+
         try:
-            await self.execute_sql(
-                'INSERT INTO users ("id", "identifier", "createdAt", "metadata") '
-                'VALUES (:id, :identifier, :createdAt, :metadata) '
-                'ON CONFLICT ("identifier") DO NOTHING',
-                {
-                    "id": str(uuid.uuid4()),
-                    "identifier": identifier,
-                    "createdAt": datetime.now(timezone.utc).isoformat(),
-                    "metadata": "{}",
-                },
+            row = await asyncio.to_thread(fetch_or_create)
+            if not row:
+                return None
+            return PersistedUser(
+                id=str(row["id"]),
+                identifier=str(row["identifier"]),
+                createdAt=str(row["createdAt"]),
+                metadata=row.get("metadata") or {},
             )
         except Exception as exc:
-            print(f"[HERALD] _herald_create_user insert warning for '{identifier}': {exc}")
-        # Use parent's get_user directly — bypasses this override, no recursion.
-        return await super().get_user(identifier)
+            print(f"[HERALD] REST user fallback failed for '{identifier}': {exc}")
+            return None
 
     async def get_thread_author(self, thread_id: str) -> str | None:
         """Override to return None safely instead of raising when thread is not found."""
@@ -114,7 +202,6 @@ class HeraldSQLAlchemyDataLayer(SQLAlchemyDataLayer):
                 data=[],
                 pageInfo=PageInfo(hasNextPage=False, startCursor=None, endCursor=None),
             )
-
 
 @cl.data_layer
 def get_data_layer():
@@ -152,6 +239,15 @@ async def on_app_startup():
         print("[HERALD] Schema bootstrap timed out — continuing startup anyway.")
     except Exception as e:
         print(f"[HERALD] Schema bootstrap warning: {e}")
+    try:
+        await asyncio.wait_for(
+            ensure_application_schema(_raw_db_uri),
+            timeout=15,
+        )
+    except asyncio.TimeoutError:
+        print("[HERALD] Compatibility upgrade timed out — continuing startup.")
+    except Exception as exc:
+        print(f"[HERALD] Compatibility upgrade warning: {exc}")
 
 
 AUTHOR = "HERALD"
@@ -229,7 +325,7 @@ You are opinionated. You have a view. You share it.
 THREE CONTENT SOURCES (automated daily):
 - Elena Nisonoff (@elenanisonoff) — TikTok — finance and VC commentary
 - TBPN Podcast (YouTube @tbpn) — VC and PE market commentary
-- All-In Podcast (YouTube @allinpodcast) — macro + tech + PE crossover
+- All-In Podcast (YouTube @allin) — macro + tech + PE crossover
 
 YOUR TONE:
 Short sentences. Direct. Opinionated when you have a view.
@@ -248,6 +344,11 @@ HARD RULES:
    scrape if needed, summarise with today's date as context.
 7. Keep casual replies under 150 words.
 8. Sound opinionated. Not like you summarised something.
+9. Never invent the current edition topics from domain knowledge. Questions
+   about this week, today's edition, or source recency must use stored or freshly
+   ingested evidence from Elena, TBPN, All-In, morning briefs, and saved topics.
+10. A request to draft an edition means the full newsletter pipeline and HTML
+    preview. Never answer that request with a sample HTML code block.
 
 TOOLS:
 /research — live web search for current deal activity
@@ -357,7 +458,12 @@ def sanitise_response(text: str) -> str:
 
 # ── HTML preview ─────────────────────────────────────────────────────────────
 
-async def show_html_preview(html_content: str, title: str = "Newsletter Preview") -> None:
+async def show_html_preview(
+    html_content: str,
+    title: str = "Newsletter Preview",
+    issue_id: str = "",
+    publishable: bool = False,
+) -> None:
     """Save HTML to public dir and show as an inline iframe with action buttons."""
     html_hash = hashlib.md5(html_content.encode()).hexdigest()[:8]
     filename = f"preview_{html_hash}.html"
@@ -383,8 +489,14 @@ async def show_html_preview(html_content: str, title: str = "Newsletter Preview"
     actions = [
         cl.Action(name="export_html", payload={"html_path": tmp_path, "filename": f"herald_{html_hash}.html"}, label="Download HTML", icon="download"),
         cl.Action(name="edit_newsletter_content", payload={"html_path": tmp_path}, label="Edit content", icon="pencil"),
-        cl.Action(name="approve_newsletter", payload={"issue_id": "latest"}, label="Approve and publish", icon="check"),
     ]
+    if publishable and issue_id:
+        actions.append(cl.Action(
+            name="approve_newsletter",
+            payload={"issue_id": issue_id},
+            label="Approve and publish",
+            icon="check",
+        ))
     await cl.Message(content=preview_card, actions=actions, author=AUTHOR).send()
 
 
@@ -494,7 +606,30 @@ async def on_resume(thread):
             history.append({"role": "assistant", "content": output})
 
     cl.user_session.set("history", history[-30:])
-    cl.user_session.set("awaiting_draft_approval", False)
+    steps = thread.get("steps", [])
+    last_user_index = max(
+        (i for i, item in enumerate(steps) if item.get("type") == "user_message"),
+        default=-1,
+    )
+    last_approval_index = max(
+        (
+            i
+            for i, item in enumerate(steps)
+            if item.get("type") == "assistant_message"
+            and "will not start generation until you approve this plan"
+            in (item.get("output") or "").lower()
+        ),
+        default=-1,
+    )
+    last_assistant_index = max(
+        (i for i, item in enumerate(steps) if item.get("type") == "assistant_message"),
+        default=-1,
+    )
+    cl.user_session.set(
+        "awaiting_draft_approval",
+        last_approval_index > last_user_index
+        and last_approval_index == last_assistant_index,
+    )
     cl.user_session.set("cross_thread_loaded", True)
     default_model = os.getenv("HERALD_DEFAULT_MODEL", "gpt-4o")
     if default_model not in AVAILABLE_MODELS:
@@ -614,9 +749,21 @@ def classify_intent(text: str, command: str | None = None) -> str:
         "draft the newsletter", "draft newsletter", "generate the newsletter",
         "create the edition", "ready to draft", "show me the topic plan",
         "let's draft", "lets draft", "ready to generate", "start drafting",
+        "draft an edition", "draft the edition", "draft this edition",
+        "draft the html", "draft html", "show me the preview",
     )):
         return "draft"
-    if any(x in lower for x in ("what topics", "edition plan", "what do we have saved", "what's planned")):
+    if any(
+        x in lower
+        for x in (
+            "what topics",
+            "edition plan",
+            "what do we have saved",
+            "what's planned",
+            "what edition",
+            "what editions",
+        )
+    ):
         return "view_plan"
     if any(x in lower for x in ("system status", "status check", "database status", "how is herald")):
         return "status"
@@ -983,6 +1130,91 @@ async def handle_draft() -> str:
     return f"{topics_text}\n\nI will not start generation until you approve this plan."
 
 
+async def get_generated_issue(issue_id: str) -> dict:
+    """Return the exact newsletter issue registered by the current generation run."""
+    from db.client import get_client
+
+    result = (
+        get_client()
+        .table("newsletter_issues")
+        .select(
+            "id,issue_number,subject_line,html_content,status,created_at,"
+            "dom_feedback,beehiiv_post_id"
+        )
+        .eq("id", issue_id)
+        .limit(1)
+        .execute()
+    )
+    return result.data[0] if result.data else {}
+
+
+async def generate_and_present_draft(trigger_reason: str) -> str:
+    """Start the real pipeline, wait for stored HTML, then render it."""
+    from intelligence.tools import draft_full_weekly_newsletter
+
+    result = await draft_full_weekly_newsletter(
+        trigger_reason,
+        return_issue_handle=True,
+    )
+    if not result.get("started"):
+        return result.get("note") or result.get("error") or "The draft did not start."
+
+    await cl.Message(
+        content=(
+            "The approved newsletter pipeline is running. I will place the "
+            "completed HTML preview here when the draft is stored."
+        ),
+        author=AUTHOR,
+    ).send()
+
+    issue_future = result.get("_issue_future")
+    task = result.get("_task")
+    issue_id = ""
+    try:
+        if issue_future:
+            issue_id = await asyncio.wait_for(
+                asyncio.shield(issue_future),
+                timeout=60,
+            )
+        if task:
+            await asyncio.wait_for(asyncio.shield(task), timeout=12 * 60)
+    except asyncio.TimeoutError:
+        return (
+            "The newsletter pipeline is still running, but the dashboard wait "
+            "window expired. The draft will still be delivered through Telegram."
+        )
+
+    draft = {}
+    if issue_id:
+        draft = await get_generated_issue(issue_id)
+    html_content = draft.get("html_content") or ""
+    if draft.get("status") != "draft" or not html_content:
+        return (
+            "The pipeline stopped without storing a completed HTML draft. "
+            "Check the generation logs before retrying."
+        )
+    if "html render failed" in html_content.lower():
+        return (
+            "The newsletter text was generated, but HTML rendering failed. "
+            "No preview or publish action was created."
+        )
+
+    title = f"Newsletter Draft · Edition {draft.get('issue_number', 'current')}"
+    publishable = bool(draft.get("beehiiv_post_id"))
+    await show_html_preview(
+        html_content,
+        title,
+        issue_id=draft.get("id", ""),
+        publishable=publishable,
+    )
+    if publishable:
+        return f"{title} is ready in the preview above."
+    return (
+        f"{title} is ready to review and download. Beehiiv draft creation "
+        "did not complete, so publishing is disabled."
+    )
+
+
 async def handle_status() -> str:
     async with cl.Step(name="Checking system status", type="tool", icon="activity", default_open=True) as step:
         try:
@@ -1154,6 +1386,34 @@ async def on_message(message: cl.Message):
 
     command = (message.command or "").lower() or None
     text = message.content.strip()
+    lower_text = re.sub(r"[^\w\s']", "", text.lower()).strip()
+
+    if cl.user_session.get("awaiting_draft_approval") and lower_text in {
+        "yes",
+        "yes draft it",
+        "draft it",
+        "go",
+        "go ahead",
+        "okay go",
+        "ok go",
+        "okay lets go",
+        "okay let's go",
+        "lets go",
+        "let's go",
+    }:
+        cl.user_session.set("awaiting_draft_approval", False)
+        response = await generate_and_present_draft(
+            "Chainlit edition plan approved in conversation"
+        )
+        await stream_response(response)
+        history.extend(
+            [
+                {"role": "user", "content": text},
+                {"role": "assistant", "content": response},
+            ]
+        )
+        cl.user_session.set("history", history[-30:])
+        return
 
     # Model switcher — early return, no history entry needed
     if (
@@ -1254,27 +1514,20 @@ async def on_confirm_draft(action):
     for _p in [str(ROOT / "tools"), str(ROOT), "/root/herald-v2/tools", "/root/herald-v2", "/root/herald"]:
         if _p not in _sys.path:
             _sys.path.insert(0, _p)
+    await action.remove()
+    cl.user_session.set("awaiting_draft_approval", False)
     async with cl.Step(name="Starting approved newsletter pipeline", type="tool", icon="play", default_open=True) as step:
         step.input = "Topic plan approved by Dom"
         try:
-            from intelligence.tools import draft_full_weekly_newsletter
-
-            result = await draft_full_weekly_newsletter("Dom approved the Chainlit edition plan")
-            step.output = compact_output(result)
-            html_content = result.get("html") or result.get("html_content") or ""
-            response = result.get("note") or "Newsletter generation complete."
+            response = await generate_and_present_draft(
+                "Dom approved the Chainlit edition plan"
+            )
+            step.output = response
         except Exception as exc:
             step.output = f"Failed: {str(exc)[:300]}"
-            result = {}
-            html_content = ""
-            response = f"The draft pipeline could not start: {str(exc)[:220]}"
+            response = f"The draft pipeline could not complete: {str(exc)[:220]}"
 
     await stream_response(response)
-    cl.user_session.set("awaiting_draft_approval", False)
-    await action.remove()
-
-    if html_content:
-        await show_html_preview(html_content, "Newsletter Draft")
 
 
 @cl.action_callback("continue_editing")
@@ -1336,16 +1589,25 @@ async def on_download(action):
 
 @cl.action_callback("approve_newsletter")
 async def on_approve(action):
+    issue_id = action.payload.get("issue_id", "")
+    if not issue_id:
+        await cl.Message(
+            content="Publish blocked: this preview is not tied to a newsletter issue.",
+            author=AUTHOR,
+        ).send()
+        await action.remove()
+        return
     async with cl.Step(name="Publishing to Beehiiv", type="tool", icon="send", default_open=True) as step:
         try:
-            result = await run_cli("publish-latest")
+            result = await run_cli("publish-issue", issue_id)
             step.output = compact_output(result)
         except Exception as exc:
             result = {"error": str(exc)}
             step.output = f"Failed: {str(exc)[:200]}"
     text = "Published to Beehiiv." if result.get("success") else f"Publish failed: {result.get('error') or result.get('note')}"
     await cl.Message(content=sanitise_response(text), author=AUTHOR).send()
-    await action.remove()
+    if result.get("success"):
+        await action.remove()
 
 
 @cl.action_callback("request_edits")
