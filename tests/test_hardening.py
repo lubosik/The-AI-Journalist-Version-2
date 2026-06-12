@@ -199,6 +199,10 @@ class TestProductionReliability(unittest.TestCase):
         source = Path("tools/agents/orchestrator.py").read_text()
         self.assertIn("Newsletter performance analytics unavailable", source)
 
+    def test_schema_bootstrap_is_opt_in(self):
+        source = Path("app.py").read_text()
+        self.assertIn('HERALD_BOOTSTRAP_SCHEMA", "false"', source)
+
     def test_model_dropdown_uses_delegated_click_handler(self):
         source = Path("public/herald.js").read_text()
         self.assertIn("event.target.closest('button, [role=\"button\"]')", source)

@@ -1009,7 +1009,9 @@ async def save_studio_issue(
 
 @cl.on_app_startup
 async def on_app_startup():
-    """Create Chainlit + app tables if they don't exist. Runs once at startup."""
+    """Optionally bootstrap a fresh database without delaying normal web startup."""
+    if os.getenv("HERALD_BOOTSTRAP_SCHEMA", "false").lower() != "true":
+        return
     if not _db_uri:
         return
     import sqlalchemy
