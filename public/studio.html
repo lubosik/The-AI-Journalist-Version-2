@@ -69,6 +69,18 @@
       font: inherit;
     }
     textarea { min-height: 220px; resize: vertical; }
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-top: 18px;
+    }
+    .tabs button.active {
+      color: #08090d;
+      background: var(--accent);
+    }
+    .editor-pane[hidden] { display: none; }
+    .section-editor { margin-top: 16px; }
+    .section-editor textarea { min-height: 180px; }
     .row {
       display: grid;
       gap: 12px;
@@ -119,9 +131,25 @@
   <div class="shell">
     <aside class="panel">
       <h1>Newsletter Studio</h1>
-      <p>Edit the current draft, upload a visual, place it, and export the updated HTML.</p>
+      <p>Edit the newsletter in plain text and watch the HTML preview update automatically.</p>
 
-      <div class="card">
+      <div class="tabs" role="tablist" aria-label="Newsletter editor mode">
+        <button id="plainTab" class="active" type="button">Plain text</button>
+        <button id="htmlTab" class="secondary" type="button">HTML</button>
+      </div>
+
+      <div id="plainEditor" class="editor-pane">
+        <div class="card">
+          <strong>Newsletter copy</strong>
+          <p>Edit any section below. Changes are rebuilt and saved automatically.</p>
+          <div id="sectionEditors"></div>
+          <div class="actions">
+            <button id="savePlain">Save changes</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="htmlEditor" class="card editor-pane" hidden>
         <label for="rawHtml">HTML</label>
         <textarea id="rawHtml" spellcheck="false"></textarea>
         <div class="actions">
@@ -176,7 +204,14 @@
       const rawHtml = document.getElementById('rawHtml');
       const previewFrame = document.getElementById('previewFrame');
       const status = document.getElementById('status');
+      const sectionEditors = document.getElementById('sectionEditors');
+      const plainEditor = document.getElementById('plainEditor');
+      const htmlEditor = document.getElementById('htmlEditor');
+      const plainTab = document.getElementById('plainTab');
+      const htmlTab = document.getElementById('htmlTab');
       let currentHtml = '';
+      let currentSections = [];
+      let saveTimer = null;
 
       function setStatus(text) {
         status.textContent = text;
@@ -189,7 +224,55 @@
         setStatus('Preview updated.');
       }
 
+      function setEditorMode(mode) {
+        const plain = mode === 'plain';
+        plainEditor.hidden = !plain;
+        htmlEditor.hidden = plain;
+        plainTab.classList.toggle('active', plain);
+        htmlTab.classList.toggle('active', !plain);
+      }
+
+      function renderSectionEditors(sections) {
+        currentSections = sections || [];
+        sectionEditors.innerHTML = '';
+        currentSections.forEach(function (section, index) {
+          const wrapper = document.createElement('div');
+          wrapper.className = 'section-editor';
+          const label = document.createElement('label');
+          label.textContent = section.title || section.id || ('Section ' + (index + 1));
+          const textarea = document.createElement('textarea');
+          textarea.value = section.content || '';
+          textarea.spellcheck = true;
+          textarea.dataset.sectionIndex = String(index);
+          textarea.addEventListener('input', function () {
+            currentSections[index].content = textarea.value;
+            clearTimeout(saveTimer);
+            saveTimer = setTimeout(function () { saveStructuredIssue(true); }, 650);
+          });
+          wrapper.appendChild(label);
+          wrapper.appendChild(textarea);
+          sectionEditors.appendChild(wrapper);
+        });
+      }
+
       async function loadPreview() {
+        if (issueId) {
+          try {
+            const issueResponse = await fetch(
+              '/herald/studio/issues/' + encodeURIComponent(issueId) + '/data',
+              { method: 'POST' }
+            );
+            if (issueResponse.ok) {
+              const issue = await issueResponse.json();
+              renderSectionEditors(issue.sections || []);
+              if (issue.html) updatePreview(issue.html);
+              setStatus('Draft loaded. Plain-text changes save automatically.');
+              return;
+            }
+          } catch (error) {
+            setStatus('Could not load stored issue data. Loading HTML preview instead.');
+          }
+        }
         if (!previewPath) {
           setStatus('No preview URL provided. Paste HTML to begin.');
           return;
@@ -202,6 +285,26 @@
         } catch (error) {
           setStatus('Could not load preview HTML.');
         }
+      }
+
+      async function saveStructuredIssue(automatic) {
+        if (!issueId || !currentSections.length) {
+          if (!automatic) setStatus('This draft has no editable text sections.');
+          return;
+        }
+        setStatus(automatic ? 'Updating preview...' : 'Saving text changes...');
+        const response = await fetch('/herald/studio/issues/' + encodeURIComponent(issueId), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sections: currentSections })
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          setStatus(payload.detail || 'Save failed.');
+          return;
+        }
+        if (payload.html) updatePreview(payload.html);
+        setStatus('Text saved. HTML preview is current.');
       }
 
       function downloadHtml() {
@@ -296,6 +399,12 @@
 
       document.getElementById('downloadHtml').addEventListener('click', downloadHtml);
       document.getElementById('saveIssue').addEventListener('click', saveIssue);
+      document.getElementById('savePlain').addEventListener('click', function () {
+        clearTimeout(saveTimer);
+        saveStructuredIssue(false);
+      });
+      plainTab.addEventListener('click', function () { setEditorMode('plain'); });
+      htmlTab.addEventListener('click', function () { setEditorMode('html'); });
 
       document.getElementById('insertImage').addEventListener('click', function () {
         const file = document.getElementById('imageFile').files[0];

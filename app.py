@@ -966,6 +966,59 @@ async def upload_studio_image(
     return JSONResponse({"url": url})
 
 
+@chainlit_app.post("/herald/studio/issues/{issue_id}/data")
+async def get_studio_issue(
+    issue_id: str,
+    current_user=Depends(get_current_user),
+):
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    await _get_collaboration_context(current_user)
+
+    from bs4 import BeautifulSoup
+    from db.client import get_client
+
+    result = await asyncio.to_thread(
+        lambda: get_client()
+        .table("newsletter_issues")
+        .select(
+            "id,issue_number,status,subject_line,preview_text,html_content,"
+            "plain_text,sections,visuals,week_start"
+        )
+        .eq("id", issue_id)
+        .limit(1)
+        .execute()
+    )
+    issue = result.data[0] if result.data else None
+    if not issue:
+        raise HTTPException(status_code=404, detail="Newsletter issue not found")
+
+    editable_sections = []
+    for section in issue.get("sections") or []:
+        content = str(section.get("content") or "")
+        text = BeautifulSoup(content, "html.parser").get_text("\n\n", strip=True)
+        editable_sections.append(
+            {
+                "id": section.get("id"),
+                "title": section.get("title") or section.get("id") or "Section",
+                "content": text,
+            }
+        )
+
+    return JSONResponse(
+        {
+            "id": issue["id"],
+            "issue_number": issue.get("issue_number"),
+            "status": issue.get("status"),
+            "subject_line": issue.get("subject_line") or "",
+            "preview_text": issue.get("preview_text") or "",
+            "html": issue.get("html_content") or "",
+            "plain_text": issue.get("plain_text") or "",
+            "sections": editable_sections,
+        }
+    )
+
+
 @chainlit_app.post("/herald/studio/issues/{issue_id}")
 async def save_studio_issue(
     issue_id: str,
@@ -976,9 +1029,6 @@ async def save_studio_issue(
         raise HTTPException(status_code=401, detail="Authentication required")
     await _get_collaboration_context(current_user)
     payload = await request.json()
-    html_content = str(payload.get("html") or "")
-    if len(html_content) < 200 or "<html" not in html_content.lower():
-        raise HTTPException(status_code=400, detail="Invalid newsletter HTML")
 
     from db.client import get_client
     from db.queries import update_newsletter_issue
@@ -986,7 +1036,10 @@ async def save_studio_issue(
     result = await asyncio.to_thread(
         lambda: get_client()
         .table("newsletter_issues")
-        .select("id,status,subject_line,preview_text")
+        .select(
+            "id,issue_number,status,subject_line,preview_text,sections,"
+            "visuals,week_start"
+        )
         .eq("id", issue_id)
         .limit(1)
         .execute()
@@ -997,12 +1050,67 @@ async def save_studio_issue(
     if issue.get("status") in {"published", "sent"}:
         raise HTTPException(status_code=409, detail="Published issues cannot be edited")
 
+    updates = {}
+    submitted_sections = payload.get("sections")
+    if isinstance(submitted_sections, list):
+        existing_by_id = {
+            str(section.get("id")): section
+            for section in (issue.get("sections") or [])
+            if section.get("id")
+        }
+        sections = []
+        for submitted in submitted_sections:
+            section_id = str(submitted.get("id") or "")
+            if section_id not in existing_by_id:
+                continue
+            current = existing_by_id[section_id]
+            sections.append(
+                {
+                    **current,
+                    "title": str(submitted.get("title") or current.get("title") or section_id),
+                    "content": str(submitted.get("content") or ""),
+                }
+            )
+        if not sections:
+            raise HTTPException(status_code=400, detail="No editable sections supplied")
+
+        from newsletter.builder import build_newsletter_html, build_plain_text
+
+        week_start = issue.get("week_start")
+        try:
+            week_start = datetime.fromisoformat(str(week_start)).date() if week_start else None
+        except ValueError:
+            week_start = None
+        html_content = await build_newsletter_html(
+            sections=sections,
+            visuals=issue.get("visuals") or [],
+            issue_number=int(issue.get("issue_number") or 0),
+            subject_line=issue.get("subject_line") or "Newsletter Draft",
+            week_start=week_start,
+        )
+        updates = {
+            "sections": sections,
+            "plain_text": build_plain_text(sections),
+            "html_content": html_content,
+        }
+    else:
+        html_content = str(payload.get("html") or "")
+        if len(html_content) < 200 or "<html" not in html_content.lower():
+            raise HTTPException(status_code=400, detail="Invalid newsletter HTML")
+        updates = {"html_content": html_content}
+
     await asyncio.to_thread(
         update_newsletter_issue,
         issue_id,
-        {"html_content": html_content},
+        updates,
     )
-    return JSONResponse({"success": True})
+    return JSONResponse(
+        {
+            "success": True,
+            "html": updates.get("html_content", ""),
+            "plain_text": updates.get("plain_text", ""),
+        }
+    )
 
 
 @cl.on_app_startup
@@ -2025,11 +2133,91 @@ def format_plan(result: dict) -> str:
     return "\n".join(lines)
 
 
-async def get_smart_draft_topics() -> str:
-    """Pull topics from edition_topics + recent content_items for draft review."""
-    try:
-        from db.client import get_client
+def extract_requested_draft_topic(text: str) -> str:
+    """Extract an explicit newsletter subject from a draft request."""
+    cleaned = re.sub(r"\s+", " ", (text or "").strip())
+    if not cleaned:
+        return ""
 
+    for pattern in (
+        r"\b(?:based\s+on|focused\s+on|focusing\s+on|about|covering|on)\s+(.+)$",
+        r"^\s*(?:let(?:'s|s)\s+)?(?:please\s+)?"
+        r"(?:draft|write|create|generate|produce|build)\s+(?:up\s+)?"
+        r"(?:(?:a|an|the|this\s+week(?:'s)?)\s+)?"
+        r"(?:newsletter|edition)\s*[:\-]?\s*(.+)$",
+    ):
+        match = re.search(pattern, cleaned, flags=re.IGNORECASE)
+        if match:
+            topic = match.group(1).strip(" .?!,:;-")
+            if topic.lower() not in {
+                "this",
+                "this week",
+                "the current topics",
+                "the saved topics",
+                "the topic plan",
+            }:
+                return topic
+    return ""
+
+
+async def prepare_requested_draft_topic(
+    request_text: str,
+    history: list[dict] | None = None,
+) -> str:
+    """Research and save an explicit draft subject before showing approval."""
+    topic = extract_requested_draft_topic(request_text)
+    if not topic:
+        return ""
+
+    from scheduler.edition_manager import get_current_edition_state
+    from tracking.topic_store import get_all_topics_for_edition, save_topic
+
+    edition_state = await get_current_edition_state()
+    edition_number = edition_state["active_edition"]
+    existing = get_all_topics_for_edition(edition_number)
+    normalised = re.sub(r"\W+", " ", topic.lower()).strip()
+    for row in existing:
+        candidate = re.sub(
+            r"\W+",
+            " ",
+            str(row.get("topic") or "").lower(),
+        ).strip()
+        if candidate == normalised:
+            return f'Already saved for Edition {edition_number}: "{topic}"'
+
+    research_summary = ""
+    async with cl.Step(
+        name="Researching requested newsletter topic",
+        type="tool",
+        icon="search",
+        show_input=True,
+        default_open=True,
+    ) as step:
+        step.input = topic
+        try:
+            research_prompt = build_research_user_prompt(topic, mode="research")
+            result = await run_cli("research", research_prompt, "--deep", timeout=360)
+            research_summary = compact_output(result, 6000)
+            step.output = research_summary[:1400]
+        except Exception as exc:
+            step.output = f"Research unavailable: {str(exc)[:240]}"
+
+    saved = await save_topic(
+        topic=topic,
+        topic_type="headline",
+        source_content=research_summary or topic,
+        dom_instruction=request_text,
+        edition_number=edition_number,
+        priority=10,
+    )
+    if not saved.get("saved"):
+        raise RuntimeError(f'Could not save requested topic: "{topic}"')
+    return f'Saved required topic for Edition {edition_number}: "{topic}"'
+
+
+async def get_smart_draft_topics() -> str:
+    """Pull user-selected edition topics for draft review."""
+    try:
         plan = {}
         try:
             plan = await run_cli("view-plan")
@@ -2039,20 +2227,6 @@ async def get_smart_draft_topics() -> str:
         edition = edition_data.get("active_edition", "current")
         dom_topics = plan.get("topics") or []
         dom_topics = [t for t in dom_topics if not t.get("used")]
-
-        supabase = get_client()
-
-        week_ago = (datetime.now() - timedelta(days=7)).isoformat()
-        recent = (
-            supabase.table("content_items")
-            .select("title, source_name, raw_text, scraped_at")
-            .in_("source_name", ["elenanisonoff", "TBPN", "All-In Podcast"])
-            .gte("scraped_at", week_ago)
-            .order("scraped_at", desc=True)
-            .limit(6)
-            .execute()
-        )
-        recent_items = recent.data or []
 
         today = datetime.now().strftime("%A %d %B %Y")
         lines = [f"Edition {edition} — draft review", f"Today: {today}\n"]
@@ -2069,15 +2243,10 @@ async def get_smart_draft_topics() -> str:
         else:
             lines.append("No topics saved by you yet for this edition.")
 
-        if recent_items:
-            lines.append(f"\nThis week from sources ({len(recent_items)} items):")
-            for item in recent_items:
-                title = item.get("title") or (item.get("raw_text") or "")[:80]
-                source = item.get("source_name", "")
-                scraped = (item.get("scraped_at") or "")[:10]
-                lines.append(f"  [{source} {scraped}] {title}")
-        else:
-            lines.append("\nNo new source content this week yet.")
+        lines.append(
+            "\nHERALD will use this week's source feeds as evidence only. "
+            "The draft will cover the saved topics above."
+        )
 
         return "\n".join(lines)
 
@@ -2085,11 +2254,19 @@ async def get_smart_draft_topics() -> str:
         return f"Could not load topics: {str(exc)[:120]}"
 
 
-async def handle_draft() -> str:
+async def handle_draft(
+    request_text: str = "",
+    history: list[dict] | None = None,
+) -> str:
     """
     Draft initiation — show topic plan and wait for explicit approval.
     NEVER generates content directly. That is on_confirm_draft's job.
     """
+    if request_text:
+        saved_note = await prepare_requested_draft_topic(request_text, history)
+        if saved_note:
+            await cl.Message(content=saved_note, author=AUTHOR).send()
+
     async with cl.Step(name="Loading topic plan", type="tool", icon="list", default_open=True) as step:
         topics_text = await get_smart_draft_topics()
         step.output = topics_text[:600]
@@ -2416,7 +2593,7 @@ async def on_message(message: cl.Message):
                 cl.user_session.set("history", history[-30:])
                 return
             elif pending_type == "draft":
-                response = await handle_draft()
+                response = await handle_draft(pending_topic, history)
                 if response:
                     await stream_response(response)
                 history.extend([
@@ -2579,7 +2756,7 @@ async def on_message(message: cl.Message):
         elif intent_key == "view_plan":
             response = await handle_view_plan()
         elif intent_key == "draft":
-            response = await handle_draft()
+            response = await handle_draft(text, history)
         elif intent_key == "status":
             response = await handle_status()
         elif intent_key == "morning_brief":
@@ -2593,7 +2770,7 @@ async def on_message(message: cl.Message):
             _has_draft_verb = any(v in lower_text for v in ("draft", "produce", "write", "generate", "create"))
             _has_newsletter_noun = any(n in lower_text for n in ("newsletter", "edition", "html preview"))
             if _has_draft_verb and _has_newsletter_noun and len(lower_text.split()) > 2:
-                response = await handle_draft()
+                response = await handle_draft(text, history)
             else:
                 response = await analyse_with_hermes(text, history)
     except Exception as exc:

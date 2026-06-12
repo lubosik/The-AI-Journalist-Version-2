@@ -218,6 +218,40 @@ class TestProductionReliability(unittest.TestCase):
         self.assertIn("event.target.closest('button, [role=\"button\"]')", source)
         self.assertIn("Hermes (GPT-5.5)", source)
 
+    def test_studio_supports_plain_text_section_editing(self):
+        source = Path("public/studio.html").read_text()
+        self.assertIn('id="plainTab"', source)
+        self.assertIn("saveStructuredIssue", source)
+        self.assertIn("Text saved. HTML preview is current.", source)
+
+
+class TestDraftTopicCapture(unittest.TestCase):
+    def setUp(self):
+        import app
+        self.app = app
+
+    def test_extracts_topic_after_on(self):
+        self.assertEqual(
+            self.app.extract_requested_draft_topic(
+                "Lets draft up an edition on Elon Musk becoming a trillionaire"
+            ),
+            "Elon Musk becoming a trillionaire",
+        )
+
+    def test_extracts_topic_after_based_on(self):
+        self.assertEqual(
+            self.app.extract_requested_draft_topic(
+                "Draft a newsletter based on SpaceX IPO allocation dynamics"
+            ),
+            "SpaceX IPO allocation dynamics",
+        )
+
+    def test_generic_draft_request_has_no_forced_topic(self):
+        self.assertEqual(
+            self.app.extract_requested_draft_topic("Let's draft this week's edition"),
+            "",
+        )
+
 
 class TestGenerateAndPresentDraftSignature(unittest.TestCase):
     """generate_and_present_draft must exist and have correct signature."""
