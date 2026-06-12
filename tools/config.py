@@ -128,22 +128,22 @@ MODELS = {
     # calls tools, and decides what to do next.
     # Claude Opus 4.7: strongest reasoning and instruction-following on the market.
     # This is the model that must understand Dom perfectly.
-    "agent": "anthropic/claude-opus-4-7",
+    "agent": "anthropic/claude-opus-4-8",
 
     # Casual / conversational replies — short-form chat, affirmations, greetings.
     # Sonnet is the minimum here — Opus context is wasted on one-liners.
     "casual": "anthropic/claude-sonnet-4-6",
 
     # Backwards compatibility alias — same as agent.
-    "brain": "anthropic/claude-opus-4-7",
+    "brain": "anthropic/claude-opus-4-8",
 
     # Fast & cheap — intent classification, relevance scoring, tagging, summarisation.
     # Sonnet handles these reliably; Haiku occasionally misclassifies intent.
     "fast": "anthropic/claude-sonnet-4-6",
 
     # Writing — all newsletter content, LinkedIn, tweets, talking points.
-    # Claude Opus 4.7: best prose and voice-instruction following available.
-    "writer": "anthropic/claude-opus-4-7",
+    # Claude Opus 4.8: best prose and voice-instruction following available.
+    "writer": "anthropic/claude-opus-4-8",
 
     # Editorial review — newsletter quality gate, runs once per issue.
     # Sonnet is sufficient for structured scoring; Opus would be overkill here.

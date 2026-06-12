@@ -331,6 +331,43 @@ class HeraldSQLAlchemyDataLayer(SQLAlchemyDataLayer):
                         "steps": steps,
                     })
 
+            # Fallback: also pull threads by userIdentifier in case userId stored under configured-fallback UUID
+            fallback_rows = await self.execute_sql(
+                'SELECT "id"::text AS "id", "name", "createdAt"::text AS "createdAt", '
+                '"userId"::text AS "userId", "userIdentifier", "metadata" '
+                'FROM threads WHERE "userIdentifier" IN (\'dom\', \'lubosi\') '
+                'ORDER BY "createdAt" DESC LIMIT 200',
+                {},
+            )
+            for row in fallback_rows or []:
+                thread_id = str(row.get("id") or "")
+                if not thread_id or thread_id in seen:
+                    continue
+                seen.add(thread_id)
+                meta = row.get("metadata") or {}
+                if isinstance(meta, str):
+                    try:
+                        meta = json.loads(meta)
+                    except json.JSONDecodeError:
+                        meta = {}
+                steps: list[dict] = []
+                if needs_steps:
+                    step_rows = await self.execute_sql(
+                        'SELECT "output", "type", "metadata" FROM steps '
+                        'WHERE "threadId" = :tid ORDER BY "createdAt"',
+                        {"tid": thread_id},
+                    )
+                    steps = list(step_rows or [])
+                all_threads.append({
+                    "id": thread_id,
+                    "name": row.get("name") or "",
+                    "createdAt": row.get("createdAt") or "",
+                    "userId": str(row.get("userId") or ""),
+                    "userIdentifier": row.get("userIdentifier") or "",
+                    "metadata": meta,
+                    "steps": steps,
+                })
+
             search_keyword = filters.search.lower() if filters.search else None
             feedback_value = int(filters.feedback) if filters.feedback else None
             filtered_threads = []
@@ -726,6 +763,7 @@ INTENTS = {
     "research": ("Planning research", "search", "Search live sources and return specific evidence and implications."),
     "transcript": ("Locating transcript", "captions", "Search stored transcripts first, then recent channel episodes."),
     "save_topic": ("Saving editorial direction", "bookmark", "Add this instruction to the active newsletter edition."),
+    "delete_topic": ("Removing topic", "trash", "Remove a topic from the active edition plan."),
     "view_plan": ("Reading edition plan", "list", "Load the active edition and its saved topics."),
     "draft": ("Preparing draft decision", "file-text", "Review the topic plan and wait for explicit approval."),
     "status": ("Checking system health", "activity", "Inspect the active edition and database health."),
@@ -1180,7 +1218,14 @@ def classify_intent(text: str, command: str | None = None) -> str:
         return "research"
     if any(x in lower for x in ("research", "find out", "look into", "what's happening", "tell me about")):
         return "research"
-    if any(x in lower for x in ("include this", "add this", "save this", "make sure you cover", "put this in", "make sure you include")):
+    if any(x in lower for x in (
+        "remove that", "delete that", "remove this topic", "delete this topic",
+        "don't add that", "don't add this", "take out", "drop that topic",
+        "drop this topic", "remove it", "delete it", "scratch that topic",
+        "not that topic", "remove the last", "delete the last",
+    )):
+        return "delete_topic"
+    if any(x in lower for x in ("include this", "add this", "save this", "make sure you cover", "put this in", "make sure you include", "use this", "cover this", "note this", "remember this topic")):
         return "save_topic"
     # Draft check must come before view_plan
     if any(x in lower for x in (
@@ -1220,6 +1265,43 @@ def classify_intent(text: str, command: str | None = None) -> str:
     if any(x in lower for x in ("linkedin", "repurpose this")):
         return "linkedin"
     return "conversation"
+
+
+def classify_multi_intent(text: str) -> list[str]:
+    """
+    Detect if a message contains multiple distinct tool requests.
+    Returns list of intent keys if 2+ found, else empty list.
+    Multi-intent only fires for explicit tool-triggering intents.
+    """
+    lower = text.lower()
+    intents = []
+    seen: set[str] = set()
+
+    def _add(key: str):
+        if key not in seen:
+            seen.add(key)
+            intents.append(key)
+
+    # Check for each source/tool being mentioned
+    if any(x in lower for x in ("elena", "elenanisonoff", "tiktok")):
+        _add("tiktok_check")
+    if any(x in lower for x in ("tbpn", "all-in", "all in podcast", "allin")):
+        _add("source_latest")
+    if any(x in lower for x in ("youtube", "yt ", " yt,", "youtube channel")):
+        _add("source_latest")
+    if URL_RE.search(text):
+        _add("url_ingest")
+
+    # Research signals
+    if any(x in lower for x in ("research", "find out", "deep dive", "look into")):
+        _add("research")
+
+    # Save topic signal
+    if any(x in lower for x in ("include this", "add this", "save this", "use this", "cover this")):
+        _add("save_topic")
+
+    # Only return if 2+ distinct intents found
+    return intents if len(intents) >= 2 else []
 
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
@@ -1513,6 +1595,41 @@ async def handle_save_topic(text: str) -> str:
     return format_tool_fallback(result)
 
 
+async def handle_delete_topic(text: str) -> str:
+    """Remove the most recently added topic, or a topic matching the description."""
+    from scheduler.edition_manager import get_current_edition_state
+    from tracking.topic_store import get_all_topics_for_edition, remove_topic
+
+    try:
+        edition_state = await asyncio.to_thread(get_current_edition_state)
+        edition_number = edition_state.get("active_edition")
+        if not edition_number:
+            return "No active edition found. Nothing to remove."
+
+        topics = await asyncio.to_thread(get_all_topics_for_edition, edition_number)
+        if not topics:
+            return "No topics in the current edition to remove."
+
+        # Try to find the best matching topic by keyword from the user's message
+        lower = text.lower()
+        matched = None
+        for t in reversed(topics):  # Most recently added first
+            topic_text = (t.get("topic") or "").lower()
+            words = [w for w in lower.split() if len(w) > 3 and w not in ("remove", "delete", "that", "this", "topic", "don't", "add")]
+            if words and any(w in topic_text for w in words):
+                matched = t
+                break
+        if not matched:
+            matched = topics[-1]  # Default to most recently added
+
+        removed = await asyncio.to_thread(remove_topic, matched["id"])
+        if removed:
+            return f"Removed: \"{matched.get('topic', '')}\" from Edition {edition_number}."
+        return "Could not remove the topic. Try the Topics command to see the current list."
+    except Exception as e:
+        return f"Remove topic failed: {str(e)[:200]}"
+
+
 async def handle_view_plan() -> str:
     async with cl.Step(name="Reading edition plan", type="tool", icon="list", default_open=True) as step:
         try:
@@ -1609,13 +1726,17 @@ async def handle_draft() -> str:
         topics_text = await get_smart_draft_topics()
         step.output = topics_text[:600]
 
+    # Send topics text FIRST so Dom reads it before seeing the buttons
+    await stream_response(f"{topics_text}\n\nReview the plan above. Ready to generate?")
+
+    # Buttons come AFTER the full topic list so Dom sees them last
     actions = [
         cl.Action(name="confirm_draft", payload={}, label="Yes, draft it", icon="check"),
         cl.Action(name="continue_editing", payload={}, label="Add more topics first", icon="plus"),
     ]
-    await cl.Message(content="Awaiting your approval.", actions=actions, author=AUTHOR).send()
+    await cl.Message(content="Approve this plan?", actions=actions, author=AUTHOR).send()
     cl.user_session.set("awaiting_draft_approval", True)
-    return f"{topics_text}\n\nI will not start generation until you approve this plan."
+    return ""
 
 
 async def get_generated_issue(issue_id: str) -> dict:
@@ -1823,7 +1944,7 @@ async def handle_source_check(message: str, history: list[dict]) -> str:
 
 
 async def handle_model_switcher(text: str, command: str | None) -> None:
-    """Show the model selector with clickable action buttons."""
+    """Show the model selector using AskActionMessage for reliable rendering."""
     current_key = cl.user_session.get("selected_model", "hermes")
     current = AVAILABLE_MODELS.get(current_key, AVAILABLE_MODELS["hermes"])
 
@@ -1835,15 +1956,26 @@ async def handle_model_switcher(text: str, command: str | None) -> None:
                 name="switch_model",
                 payload={"model_key": key},
                 label=f"{'✓ ' if is_current else ''}{model['label']}",
-                tooltip=model["description"],
+                description=model["description"],
             )
         )
 
-    await cl.Message(
-        content=f"Current model: **{current['label']}**\n\nSelect a model:",
+    res = await cl.AskActionMessage(
+        content=f"**Current model:** {current['label']}\n\nPick a model:",
         actions=actions,
         author=AUTHOR,
+        timeout=120,
     ).send()
+
+    if res:
+        chosen_key = (res.get("payload") or {}).get("model_key", "hermes")
+        chosen = AVAILABLE_MODELS.get(chosen_key)
+        if chosen:
+            cl.user_session.set("selected_model", chosen_key)
+            await cl.Message(
+                content=f"Switched to **{chosen['label']}**. {chosen['description']}",
+                author=AUTHOR,
+            ).send()
 
 
 async def handle_file_uploads(message: cl.Message) -> None:
@@ -1951,6 +2083,50 @@ async def on_message(message: cl.Message):
         step.input = text[:240] or f"/{command or intent_key}"
         step.output = intent_detail(intent_key, text, history)
 
+    # Multi-intent: detect if 2+ tool requests are packed into one message
+    multi_intents = classify_multi_intent(text) if not command else []
+    if len(multi_intents) >= 2:
+        intent_labels = {
+            "tiktok_check": "Scrape Elena TikTok",
+            "source_latest": "Check TBPN / All-In latest content",
+            "url_ingest": "Ingest URL",
+            "research": "Run web research",
+            "save_topic": "Save topic",
+        }
+        plan_lines = "\n".join(f"{i+1}. {intent_labels.get(k, k)}" for i, k in enumerate(multi_intents))
+        await cl.Message(
+            content=f"Got it. I see {len(multi_intents)} requests in that message. Here's my plan:\n\n{plan_lines}\n\nExecuting now...",
+            author=AUTHOR,
+        ).send()
+        responses = []
+        for mi_key in multi_intents:
+            try:
+                if mi_key == "tiktok_check":
+                    r = await handle_source_check(text, history)
+                elif mi_key == "source_latest":
+                    r = await handle_source_check(text, history)
+                elif mi_key == "url_ingest":
+                    r = await handle_url(text, history) if URL_RE.search(text) else ""
+                elif mi_key == "research":
+                    r = await handle_research(text, history)
+                elif mi_key == "save_topic":
+                    r = await handle_save_topic(text)
+                else:
+                    r = ""
+                if r:
+                    responses.append(r)
+            except Exception as e:
+                responses.append(f"[{mi_key} failed: {str(e)[:100]}]")
+        combined = "\n\n---\n\n".join(responses)
+        if combined:
+            await stream_response(combined)
+        history.extend([
+            {"role": "user", "content": text},
+            {"role": "assistant", "content": combined},
+        ])
+        cl.user_session.set("history", history[-30:])
+        return
+
     if message.elements:
         await handle_file_uploads(message)
         if not text:
@@ -1970,6 +2146,8 @@ async def on_message(message: cl.Message):
             response = await handle_transcript(text, history)
         elif intent_key == "save_topic":
             response = await handle_save_topic(text)
+        elif intent_key == "delete_topic":
+            response = await handle_delete_topic(text)
         elif intent_key == "view_plan":
             response = await handle_view_plan()
         elif intent_key == "draft":
@@ -1993,7 +2171,8 @@ async def on_message(message: cl.Message):
     except Exception as exc:
         response = f"That action failed before completion: {str(exc)[:260]}"
 
-    await stream_response(response)
+    if response:
+        await stream_response(response)
     history.extend([
         {"role": "user", "content": text or f"/{command or intent_key}"},
         {"role": "assistant", "content": response},

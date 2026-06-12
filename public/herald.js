@@ -208,9 +208,9 @@
         year: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
-        timeZone: 'UTC',
+        timeZone: 'America/New_York',
         hour12: false
-      }) + ' UTC';
+      }) + ' ET';
     } catch (_) {
       return '';
     }
