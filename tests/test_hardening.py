@@ -176,9 +176,33 @@ class TestAvailableModels(unittest.TestCase):
     def test_default_hermes_model_present(self):
         self.assertIn("hermes", self.app.AVAILABLE_MODELS)
 
+    def test_hermes_uses_gpt_55(self):
+        self.assertEqual(
+            self.app.AVAILABLE_MODELS["hermes"]["id"],
+            "openai/gpt-5.5",
+        )
+
     def test_claude_opus_48_present(self):
         ids = [m["id"] for m in self.app.AVAILABLE_MODELS.values()]
         self.assertTrue(any("opus-4-8" in mid for mid in ids), "claude-opus-4-8 not in AVAILABLE_MODELS")
+
+
+class TestProductionReliability(unittest.TestCase):
+    def setUp(self):
+        import app
+        self.app = app
+
+    def test_supabase_data_layer_fallback_exists(self):
+        self.assertTrue(hasattr(self.app, "HeraldSupabaseDataLayer"))
+
+    def test_pipeline_performance_import_is_optional(self):
+        source = Path("tools/agents/orchestrator.py").read_text()
+        self.assertIn("Newsletter performance analytics unavailable", source)
+
+    def test_model_dropdown_uses_delegated_click_handler(self):
+        source = Path("public/herald.js").read_text()
+        self.assertIn("event.target.closest('button, [role=\"button\"]')", source)
+        self.assertIn("Hermes (GPT-5.5)", source)
 
 
 class TestGenerateAndPresentDraftSignature(unittest.TestCase):

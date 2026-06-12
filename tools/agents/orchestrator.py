@@ -925,12 +925,24 @@ async def run_newsletter_generation(
 
         # ── Steps 3 + context gathering: run in parallel ──────────────────────
         logger.info("Running parallel research and context gathering")
-        from newsletter.performance import get_performance_context
-
         research_task = research_all_topics(topics)
         style_task = get_style_bible_for_prompt()
         feedback_task = get_all_active_feedback()
         context_task = get_all_context_summary(days=30)
+
+        async def get_performance_context() -> str:
+            """Performance analytics are optional until native tracking is configured."""
+            try:
+                from newsletter.performance import get_performance_context as load_context
+            except ImportError:
+                logger.info("Newsletter performance analytics unavailable; continuing without them")
+                return ""
+            try:
+                return await load_context()
+            except Exception as exc:
+                logger.warning("Newsletter performance context failed: %s", exc)
+                return ""
+
         perf_task = get_performance_context()
 
         research_results, style_bible_text, feedback_items, context_summary, performance_context = await asyncio.gather(

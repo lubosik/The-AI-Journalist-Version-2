@@ -467,7 +467,8 @@
 
   /* ── MODEL SWITCHER DROPDOWN ────────────────────────────────────────── */
   var HERALD_MODELS = [
-    { key: 'hermes',        label: 'Hermes (Default)',    desc: 'GPT-4o via OpenRouter' },
+    { key: 'hermes',        label: 'Hermes (GPT-5.5)',    desc: 'Most intelligent default via OpenRouter' },
+    { key: 'gpt-5.5',       label: 'GPT-5.5',             desc: 'Latest OpenAI frontier model' },
     { key: 'claude-sonnet', label: 'Claude Sonnet 4.6',  desc: 'Best for writing & analysis' },
     { key: 'claude-opus',   label: 'Claude Opus 4.8',    desc: 'Most capable — deep reasoning' },
     { key: 'gpt-4o',        label: 'GPT-4o',             desc: 'Fast and reliable' },
@@ -577,6 +578,22 @@
       });
     });
   }
+
+  // Chainlit changes command-button attributes between releases. Capture the
+  // visible bottom "model" control before Chainlit turns it into a chat command.
+  document.addEventListener('click', function (event) {
+    var button = event.target && event.target.closest
+      ? event.target.closest('button, [role="button"]')
+      : null;
+    if (!button) return;
+    var text = (button.textContent || '').trim().toLowerCase();
+    var aria = (button.getAttribute('aria-label') || '').trim().toLowerCase();
+    if (text !== 'model' && text !== 'models' && aria !== 'model' && aria !== 'models') return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+    if (_modelDropdownOpen) { _closeModelDropdown(); } else { _openModelDropdown(); }
+  }, true);
 
   // Show current model badge on load
   var _currentModelLabel = (HERALD_MODELS.find(function (m) { return m.key === _selectedModel; }) || HERALD_MODELS[0]).label;

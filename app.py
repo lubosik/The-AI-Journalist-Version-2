@@ -7,11 +7,14 @@ import os
 import re
 import sys
 import uuid
+from dataclasses import asdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import chainlit as cl
+from chainlit.data.base import BaseDataLayer
+from chainlit.data.base import queue_until_user_message
 from chainlit.data.sql_alchemy import SQLAlchemyDataLayer
 from chainlit.user import PersistedUser
 from chainlit.auth import get_current_user
@@ -512,11 +515,313 @@ class HeraldSQLAlchemyDataLayer(SQLAlchemyDataLayer):
         clipped = cleaned[:72].rstrip(" ,.:;")
         return clipped if len(cleaned) <= 72 else f"{clipped}..."
 
+
+class HeraldSupabaseDataLayer(BaseDataLayer):
+    """REST fallback for Railway deployments without a direct Postgres URI."""
+
+    def __init__(self):
+        self._request_lock = asyncio.Lock()
+
+    @staticmethod
+    def _client():
+        from db.client import get_client
+        return get_client()
+
+    async def _run(self, callback):
+        # supabase-py's sync HTTP/2 client is not safe for concurrent thread use.
+        async with self._request_lock:
+            return await asyncio.to_thread(callback)
+
+    async def get_user(self, identifier: str):
+        def fetch():
+            result = (
+                self._client().table("users")
+                .select("id,identifier,metadata,createdAt")
+                .eq("identifier", identifier)
+                .limit(1)
+                .execute()
+            )
+            return result.data[0] if result.data else None
+
+        row = await self._run(fetch)
+        if not row:
+            return None
+        return PersistedUser(
+            id=str(row["id"]),
+            identifier=str(row["identifier"]),
+            createdAt=str(row.get("createdAt") or ""),
+            metadata=row.get("metadata") or {},
+        )
+
+    async def create_user(self, user):
+        existing = await self.get_user(user.identifier)
+        if existing:
+            await self._run(
+                lambda: self._client().table("users").update(
+                    {"metadata": user.metadata or {}}
+                ).eq("identifier", user.identifier).execute()
+            )
+            return await self.get_user(user.identifier)
+        configured = HeraldSQLAlchemyDataLayer._get_configured_user(user.identifier)
+        user_id = configured.id if configured else str(uuid.uuid4())
+        metadata = {
+            **(configured.metadata if configured else {}),
+            **(user.metadata or {}),
+            "workspace_id": SHARED_WORKSPACE_ID,
+        }
+        await self._run(
+            lambda: self._client().table("users").insert(
+                {
+                    "id": user_id,
+                    "identifier": user.identifier,
+                    "createdAt": datetime.utcnow().isoformat() + "Z",
+                    "metadata": metadata,
+                }
+            ).execute()
+        )
+        return await self.get_user(user.identifier)
+
+    async def update_thread(
+        self,
+        thread_id: str,
+        name: str | None = None,
+        user_id: str | None = None,
+        metadata: dict | None = None,
+        tags: list[str] | None = None,
+    ):
+        session_user = getattr(cl.context.session, "user", None)
+        persisted = await self.get_user(session_user.identifier) if session_user else None
+        owner_id = user_id or (persisted.id if persisted else None)
+        owner_identifier = session_user.identifier if session_user else None
+
+        def upsert():
+            client = self._client()
+            result = (
+                client.table("threads")
+                .select("name,metadata,tags,userId,userIdentifier,createdAt")
+                .eq("id", thread_id)
+                .limit(1)
+                .execute()
+            )
+            current = result.data[0] if result.data else {}
+            merged_metadata = {
+                **(current.get("metadata") or {}),
+                **(metadata or {}),
+            }
+            if session_user:
+                merged_metadata.setdefault("workspace_id", SHARED_WORKSPACE_ID)
+                merged_metadata.setdefault("owner_identifier", session_user.identifier)
+                merged_metadata.setdefault(
+                    "owner_email",
+                    (session_user.metadata or {}).get("email", session_user.identifier),
+                )
+            payload = {
+                "id": thread_id,
+                "createdAt": current.get("createdAt") or datetime.utcnow().isoformat() + "Z",
+                "name": name if name is not None else current.get("name"),
+                "userId": owner_id or current.get("userId"),
+                "userIdentifier": owner_identifier or current.get("userIdentifier"),
+                "tags": tags if tags is not None else current.get("tags"),
+                "metadata": merged_metadata,
+            }
+            client.table("threads").upsert(payload, on_conflict="id").execute()
+
+        await self._run(upsert)
+
+    @queue_until_user_message()
+    async def create_step(self, step_dict):
+        clean = {
+            key: value
+            for key, value in step_dict.items()
+            if key in {
+                "id", "name", "type", "threadId", "parentId", "streaming",
+                "waitForAnswer", "isError", "metadata", "tags", "input", "output",
+                "createdAt", "start", "end", "generation", "showInput", "language",
+                "indent",
+            }
+        }
+        clean.setdefault("metadata", {})
+        clean["metadata"].setdefault("timestamp_utc", datetime.utcnow().isoformat() + "Z")
+        await self.update_thread(clean["threadId"])
+        if clean.get("type") == "user_message":
+            candidate = HeraldSQLAlchemyDataLayer._candidate_thread_name(
+                clean.get("output") or ""
+            )
+            if candidate:
+                await self.update_thread(clean["threadId"], name=candidate)
+        await self._run(
+            lambda: self._client().table("steps").upsert(
+                clean, on_conflict="id"
+            ).execute()
+        )
+
+    @queue_until_user_message()
+    async def update_step(self, step_dict):
+        await self.create_step(step_dict)
+
+    @queue_until_user_message()
+    async def delete_step(self, step_id: str):
+        await self._run(
+            lambda: self._client().table("steps").delete().eq("id", step_id).execute()
+        )
+
+    async def get_thread_author(self, thread_id: str) -> str:
+        thread = await self.get_thread(thread_id)
+        return (thread or {}).get("userIdentifier") or ""
+
+    async def delete_thread(self, thread_id: str):
+        await self._run(
+            lambda: self._client().table("threads").delete().eq("id", thread_id).execute()
+        )
+
+    async def _load_threads(self, user_id: str | None = None, thread_id: str | None = None):
+        def fetch():
+            query = self._client().table("threads").select("*")
+            if thread_id:
+                query = query.eq("id", thread_id)
+            elif user_id:
+                query = query.eq("userId", user_id)
+            rows = query.order("createdAt", desc=True).limit(200).execute().data or []
+            if not rows:
+                return []
+            ids = [str(row["id"]) for row in rows]
+            steps = (
+                self._client().table("steps").select("*")
+                .in_("threadId", ids)
+                .order("createdAt")
+                .execute().data or []
+            )
+            elements = (
+                self._client().table("elements").select("*")
+                .in_("threadId", ids)
+                .execute().data or []
+            )
+            feedbacks = (
+                self._client().table("feedbacks").select("*")
+                .in_("threadId", ids)
+                .execute().data or []
+            )
+            feedback_by_step = {row.get("forId"): row for row in feedbacks}
+            by_id = {}
+            for row in rows:
+                tid = str(row["id"])
+                by_id[tid] = {
+                    "id": tid,
+                    "createdAt": row.get("createdAt"),
+                    "name": row.get("name"),
+                    "userId": str(row.get("userId") or ""),
+                    "userIdentifier": row.get("userIdentifier"),
+                    "tags": row.get("tags"),
+                    "metadata": row.get("metadata") or {},
+                    "steps": [],
+                    "elements": [],
+                }
+            for step in steps:
+                tid = str(step.get("threadId") or "")
+                if tid not in by_id:
+                    continue
+                item = dict(step)
+                item["feedback"] = feedback_by_step.get(item.get("id"))
+                by_id[tid]["steps"].append(item)
+            for element in elements:
+                tid = str(element.get("threadId") or "")
+                if tid in by_id:
+                    by_id[tid]["elements"].append(element)
+            return list(by_id.values())
+
+        return await self._run(fetch)
+
+    async def list_threads(self, pagination, filters):
+        from chainlit.types import PageInfo, PaginatedResponse
+
+        threads = await self._load_threads(user_id=getattr(filters, "userId", None))
+        search = (getattr(filters, "search", None) or "").lower()
+        if search:
+            threads = [
+                thread for thread in threads
+                if any(search in (step.get("output") or "").lower() for step in thread["steps"])
+            ]
+        start = 0
+        if pagination.cursor:
+            start = next(
+                (index + 1 for index, item in enumerate(threads) if item["id"] == pagination.cursor),
+                0,
+            )
+        page = threads[start:start + pagination.first]
+        return PaginatedResponse(
+            data=page,
+            pageInfo=PageInfo(
+                hasNextPage=len(threads) > start + pagination.first,
+                startCursor=page[0]["id"] if page else None,
+                endCursor=page[-1]["id"] if page else None,
+            ),
+        )
+
+    async def get_thread(self, thread_id: str):
+        threads = await self._load_threads(thread_id=thread_id)
+        return threads[0] if threads else None
+
+    async def upsert_feedback(self, feedback) -> str:
+        feedback.id = feedback.id or str(uuid.uuid4())
+        await self._run(
+            lambda: self._client().table("feedbacks").upsert(
+                asdict(feedback), on_conflict="id"
+            ).execute()
+        )
+        return feedback.id
+
+    async def delete_feedback(self, feedback_id: str) -> bool:
+        await self._run(
+            lambda: self._client().table("feedbacks").delete().eq(
+                "id", feedback_id
+            ).execute()
+        )
+        return True
+
+    @queue_until_user_message()
+    async def create_element(self, element):
+        return None
+
+    async def get_element(self, thread_id: str, element_id: str):
+        result = await self._run(
+            lambda: self._client().table("elements").select("*")
+            .eq("threadId", thread_id).eq("id", element_id).limit(1).execute()
+        )
+        return result.data[0] if result.data else None
+
+    @queue_until_user_message()
+    async def delete_element(self, element_id: str, thread_id: str | None = None):
+        await self._run(
+            lambda: self._client().table("elements").delete().eq(
+                "id", element_id
+            ).execute()
+        )
+
+    async def get_favorite_steps(self, user_id: str):
+        threads = await self._load_threads(user_id=user_id)
+        return [
+            step
+            for thread in threads
+            for step in thread["steps"]
+            if (step.get("metadata") or {}).get("favorite")
+        ]
+
+    async def build_debug_url(self) -> str:
+        return ""
+
+    async def close(self) -> None:
+        return None
+
+
 @cl.data_layer
 def get_data_layer():
-    if not _db_uri:
-        return None
-    return HeraldSQLAlchemyDataLayer(conninfo=_db_uri, connect_args=_db_connect_args)
+    if os.getenv("HERALD_DATA_LAYER", "supabase").lower() == "sql" and _db_uri:
+        return HeraldSQLAlchemyDataLayer(conninfo=_db_uri, connect_args=_db_connect_args)
+    if os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_KEY"):
+        return HeraldSupabaseDataLayer()
+    if _db_uri:
+        return HeraldSQLAlchemyDataLayer(conninfo=_db_uri, connect_args=_db_connect_args)
+    return None
 
 
 async def _get_collaboration_context(user) -> tuple[Any, dict, dict]:
@@ -775,8 +1080,9 @@ INTENTS = {
 }
 
 AVAILABLE_MODELS = {
-    "hermes": {"id": "openai/gpt-4o", "label": "Hermes (Default)", "description": "Your default model — recommended"},
-    "gpt-4o": {"id": "openai/gpt-4o", "label": "GPT-4o", "description": "Fast and powerful"},
+    "hermes": {"id": "openai/gpt-5.5", "label": "Hermes (GPT-5.5)", "description": "Most intelligent default"},
+    "gpt-5.5": {"id": "openai/gpt-5.5", "label": "GPT-5.5", "description": "Latest OpenAI frontier model"},
+    "gpt-4o": {"id": "openai/gpt-4o", "label": "GPT-4o", "description": "Legacy fast model"},
     "claude-sonnet": {"id": "anthropic/claude-sonnet-4-6", "label": "Claude Sonnet 4.6", "description": "Best for writing and analysis"},
     "claude-opus": {"id": "anthropic/claude-opus-4-8", "label": "Claude Opus 4.8", "description": "Most capable — deep reasoning"},
     "gemini-flash": {"id": "google/gemini-2.5-flash", "label": "Gemini 2.5 Flash", "description": "Fastest"},
@@ -1047,10 +1353,10 @@ async def on_start():
     cl.user_session.set("history", [{"role": "system", "content": get_herald_system()}])
     cl.user_session.set("awaiting_draft_approval", False)
     cl.user_session.set("cross_thread_loaded", False)
-    # Default to env-configured model; fall back to "gpt-4o" (OpenRouter API) if unset.
-    default_model = os.getenv("HERALD_DEFAULT_MODEL", "gpt-4o")
+    # Default to env-configured model; Hermes routes to GPT-5.5.
+    default_model = os.getenv("HERALD_DEFAULT_MODEL", "hermes")
     if default_model not in AVAILABLE_MODELS:
-        default_model = "gpt-4o"
+        default_model = "hermes"
     cl.user_session.set("selected_model", default_model)
     await register_commands()
 
@@ -1109,9 +1415,9 @@ async def on_resume(thread):
         and last_approval_index == last_assistant_index,
     )
     cl.user_session.set("cross_thread_loaded", True)
-    default_model = os.getenv("HERALD_DEFAULT_MODEL", "gpt-4o")
+    default_model = os.getenv("HERALD_DEFAULT_MODEL", "hermes")
     if default_model not in AVAILABLE_MODELS:
-        default_model = "gpt-4o"
+        default_model = "hermes"
     cl.user_session.set("selected_model", cl.user_session.get("selected_model") or default_model)
     await register_commands()
     # DO NOT send any message here.
@@ -1383,9 +1689,9 @@ async def run_cli(*args: str, timeout: int = 900) -> dict:
 
 def _get_selected_model() -> str:
     try:
-        default_model = os.getenv("HERALD_DEFAULT_MODEL", "gpt-4o")
+        default_model = os.getenv("HERALD_DEFAULT_MODEL", "hermes")
         if default_model not in AVAILABLE_MODELS:
-            default_model = "gpt-4o"
+            default_model = "hermes"
         key = cl.user_session.get("selected_model") or default_model
         model = AVAILABLE_MODELS.get(key)
         if model:
@@ -1393,7 +1699,7 @@ def _get_selected_model() -> str:
         # Fallback: treat value as a raw model ID
         return key
     except Exception:
-        return os.getenv("HERALD_CHAT_MODEL", "openai/gpt-4o")
+        return os.getenv("HERALD_CHAT_MODEL", "openai/gpt-5.5")
 
 
 async def run_hermes(prompt: str | list[dict]) -> str:
@@ -1877,9 +2183,12 @@ async def generate_and_present_draft(trigger_reason: str) -> str:
         draft = await get_generated_issue(issue_id)
     html_content = draft.get("html_content") or ""
     if draft.get("status") != "draft" or not html_content:
+        stored_error = (draft.get("dom_feedback") or "").strip()
+        if stored_error:
+            return f"The newsletter pipeline failed: {stored_error[:500]}"
         return (
             "The pipeline stopped without storing a completed HTML draft. "
-            "Check the generation logs before retrying."
+            "No error detail was stored for this run."
         )
     if "html render failed" in html_content.lower():
         return (

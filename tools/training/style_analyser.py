@@ -651,13 +651,16 @@ def get_satire_examples(count: int = 6) -> list[str]:
         client = get_client()
         result = (
             client.table("content_items")
-            .select("raw_text, source_name")
-            .contains("topics", ["satire"])
+            .select("raw_text, source_name, topics")
             .order("scraped_at", desc=True)
-            .limit(count * 3)  # over-fetch to allow random selection
+            .limit(max(count * 10, 60))
             .execute()
         )
-        samples = result.data or []
+        samples = [
+            row
+            for row in (result.data or [])
+            if "satire" in (row.get("topics") or [])
+        ]
     except Exception as e:
         logger.error(f"get_satire_examples: DB error: {e}")
         return []
