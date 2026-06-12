@@ -465,4 +465,126 @@
 
   addPWAMeta();
 
+  /* ── MODEL SWITCHER DROPDOWN ────────────────────────────────────────── */
+  var HERALD_MODELS = [
+    { key: 'hermes',        label: 'Hermes (Default)',    desc: 'GPT-4o via OpenRouter' },
+    { key: 'claude-sonnet', label: 'Claude Sonnet 4.6',  desc: 'Best for writing & analysis' },
+    { key: 'claude-opus',   label: 'Claude Opus 4.8',    desc: 'Most capable — deep reasoning' },
+    { key: 'gpt-4o',        label: 'GPT-4o',             desc: 'Fast and reliable' },
+    { key: 'gemini-flash',  label: 'Gemini 2.5 Flash',   desc: 'Fastest responses' },
+    { key: 'perplexity',    label: 'Perplexity Sonar',   desc: 'Live web search' },
+  ];
+  var _selectedModel = localStorage.getItem('herald_model') || 'hermes';
+  var _modelDropdownOpen = false;
+
+  function _closeModelDropdown() {
+    var d = document.getElementById('herald-model-dropdown');
+    if (d) d.remove();
+    _modelDropdownOpen = false;
+  }
+
+  function _openModelDropdown() {
+    _closeModelDropdown();
+    _modelDropdownOpen = true;
+    var dropdown = document.createElement('div');
+    dropdown.id = 'herald-model-dropdown';
+    dropdown.style.cssText = [
+      'position:fixed', 'bottom:80px', 'right:20px', 'z-index:9999',
+      'background:rgba(7,7,15,0.97)', 'backdrop-filter:blur(20px)',
+      'border:1px solid rgba(255,255,255,0.1)', 'border-radius:12px',
+      'padding:8px', 'min-width:240px',
+      'box-shadow:0 16px 48px rgba(0,0,0,0.6)',
+    ].join(';');
+
+    var hdr = document.createElement('div');
+    hdr.style.cssText = 'padding:6px 10px 10px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:rgba(201,168,76,0.7);font-family:Inter,sans-serif;';
+    hdr.textContent = 'Select Model';
+    dropdown.appendChild(hdr);
+
+    HERALD_MODELS.forEach(function (m) {
+      var isCurrent = m.key === _selectedModel;
+      var item = document.createElement('div');
+      item.style.cssText = [
+        'display:flex', 'align-items:center', 'gap:10px',
+        'padding:10px 12px', 'border-radius:8px', 'cursor:pointer',
+        'background:' + (isCurrent ? 'rgba(201,168,76,0.1)' : 'transparent'),
+        'border:1px solid ' + (isCurrent ? 'rgba(201,168,76,0.3)' : 'transparent'),
+        'margin-bottom:2px', 'transition:all 0.1s ease',
+      ].join(';');
+      item.innerHTML = '<div style="flex:1;">'
+        + '<div style="font-size:13px;font-weight:500;color:' + (isCurrent ? '#c9a84c' : '#f0ece4') + ';font-family:Inter,sans-serif;">' + m.label + '</div>'
+        + '<div style="font-size:11px;color:#7a7468;font-family:Inter,sans-serif;margin-top:1px;">' + m.desc + '</div>'
+        + '</div>'
+        + (isCurrent ? '<div style="width:6px;height:6px;border-radius:50%;background:#c9a84c;"></div>' : '');
+
+      item.addEventListener('mouseenter', function () { if (!isCurrent) item.style.background = 'rgba(255,255,255,0.04)'; });
+      item.addEventListener('mouseleave', function () { if (!isCurrent) item.style.background = 'transparent'; });
+      item.addEventListener('click', function (e) {
+        e.stopPropagation();
+        _selectedModel = m.key;
+        localStorage.setItem('herald_model', m.key);
+        _closeModelDropdown();
+        _showModelBadge(m.label);
+        fetch('/api/model/switch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model_key: m.key }),
+        }).catch(function () {});
+      });
+      dropdown.appendChild(item);
+    });
+
+    document.body.appendChild(dropdown);
+    setTimeout(function () {
+      document.addEventListener('click', function _outside(e) {
+        var d2 = document.getElementById('herald-model-dropdown');
+        if (d2 && !d2.contains(e.target)) { _closeModelDropdown(); }
+        document.removeEventListener('click', _outside);
+      });
+    }, 10);
+  }
+
+  function _showModelBadge(label) {
+    var badge = document.getElementById('herald-model-badge');
+    if (!badge) {
+      badge = document.createElement('div');
+      badge.id = 'herald-model-badge';
+      badge.style.cssText = [
+        'position:fixed', 'bottom:58px', 'right:20px',
+        'background:rgba(201,168,76,0.1)', 'border:1px solid rgba(201,168,76,0.3)',
+        'border-radius:20px', 'padding:4px 12px 4px 8px',
+        'font-size:11px', 'font-family:JetBrains Mono,monospace',
+        'color:#c9a84c', 'display:flex', 'align-items:center', 'gap:6px',
+        'z-index:100', 'pointer-events:none',
+      ].join(';');
+      badge.innerHTML = '<div style="width:5px;height:5px;border-radius:50%;background:#c9a84c;"></div><span id="herald-model-name"></span>';
+      document.body.appendChild(badge);
+    }
+    var nameEl = document.getElementById('herald-model-name');
+    if (nameEl) nameEl.textContent = label;
+  }
+
+  function _wireModelButton() {
+    document.querySelectorAll(
+      '[data-id="model"], [class*="command-item"][title*="model" i], button[aria-label*="model" i]'
+    ).forEach(function (btn) {
+      if (btn.dataset._heraldWired) return;
+      btn.dataset._heraldWired = '1';
+      btn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (_modelDropdownOpen) { _closeModelDropdown(); } else { _openModelDropdown(); }
+      });
+    });
+  }
+
+  // Show current model badge on load
+  var _currentModelLabel = (HERALD_MODELS.find(function (m) { return m.key === _selectedModel; }) || HERALD_MODELS[0]).label;
+  setTimeout(function () { _showModelBadge(_currentModelLabel); }, 1500);
+
+  var _modelBtnObserver = new MutationObserver(function () { _wireModelButton(); });
+  _modelBtnObserver.observe(document.body, { childList: true, subtree: true });
+  setTimeout(_wireModelButton, 800);
+  /* ─────────────────────────────────────────────────────────────────── */
+
 })();

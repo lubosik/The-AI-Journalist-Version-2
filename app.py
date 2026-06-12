@@ -1011,6 +1011,30 @@ async def register_commands() -> None:
     await cl.context.emitter.set_commands(COMMANDS)
 
 
+@chainlit_app.post("/api/model/switch")
+async def switch_model_api(request: Request):
+    """JS dropdown posts here to persist model selection to the session."""
+    try:
+        body = await request.json()
+        model_key = body.get("model_key", "hermes")
+        if model_key not in AVAILABLE_MODELS:
+            return JSONResponse({"error": "Unknown model"}, status_code=400)
+        # Store in pipeline_state keyed by session cookie so it survives across messages
+        from db.client import get_client
+        session_id = request.cookies.get("chainlit-session", "")
+        if session_id:
+            try:
+                get_client().table("pipeline_state").upsert(
+                    {"key": f"model_{session_id[:40]}", "value": model_key},
+                    on_conflict="key",
+                ).execute()
+            except Exception:
+                pass
+        return JSONResponse({"status": "ok", "model": model_key})
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
 # ── Session lifecycle ─────────────────────────────────────────────────────────
 
 @cl.on_chat_start
