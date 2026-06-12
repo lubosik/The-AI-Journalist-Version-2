@@ -294,12 +294,42 @@ class HeraldSQLAlchemyDataLayer(SQLAlchemyDataLayer):
             workspace_users = await self._get_workspace_user_ids(workspace_id)
             all_threads = []
             seen = set()
-            for user_id in workspace_users:
-                for thread in await self.get_all_user_threads(user_id=user_id) or []:
-                    thread_id = thread.get("id")
-                    if thread_id and thread_id not in seen:
-                        seen.add(thread_id)
-                        all_threads.append(thread)
+            needs_steps = bool(filters.search or getattr(filters, "feedback", None))
+            for uid in workspace_users:
+                rows = await self.execute_sql(
+                    'SELECT "id"::text AS "id", "name", "createdAt"::text AS "createdAt", '
+                    '"userId"::text AS "userId", "userIdentifier", "metadata" '
+                    'FROM threads WHERE "userId"::text = :uid ORDER BY "createdAt" DESC LIMIT 200',
+                    {"uid": uid},
+                )
+                for row in rows or []:
+                    thread_id = str(row.get("id") or "")
+                    if not thread_id or thread_id in seen:
+                        continue
+                    seen.add(thread_id)
+                    meta = row.get("metadata") or {}
+                    if isinstance(meta, str):
+                        try:
+                            meta = json.loads(meta)
+                        except json.JSONDecodeError:
+                            meta = {}
+                    steps: list[dict] = []
+                    if needs_steps:
+                        step_rows = await self.execute_sql(
+                            'SELECT "output", "type", "metadata" FROM steps '
+                            'WHERE "threadId" = :tid ORDER BY "createdAt"',
+                            {"tid": thread_id},
+                        )
+                        steps = list(step_rows or [])
+                    all_threads.append({
+                        "id": thread_id,
+                        "name": row.get("name") or "",
+                        "createdAt": row.get("createdAt") or "",
+                        "userId": str(row.get("userId") or ""),
+                        "userIdentifier": row.get("userIdentifier") or "",
+                        "metadata": meta,
+                        "steps": steps,
+                    })
 
             search_keyword = filters.search.lower() if filters.search else None
             feedback_value = int(filters.feedback) if filters.feedback else None
@@ -682,13 +712,13 @@ HERMES_TIMEOUT = int(os.getenv("HERMES_TIMEOUT_SECONDS", "900"))
 COMMANDS = [
     {"id": "research", "icon": "search", "description": "Research a live topic", "button": True},
     {"id": "ingest", "icon": "link", "description": "Ingest and analyse a URL", "button": False},
-    {"id": "topics", "icon": "list", "description": "View the current edition plan", "button": True},
-    {"id": "brief", "icon": "sunrise", "description": "Run the morning source brief", "button": True},
-    {"id": "draft", "icon": "file-text", "description": "Review the plan before drafting", "button": True},
+    {"id": "topics", "icon": "list", "description": "View all saved topics for this edition — calls the edition plan tool immediately", "button": True},
+    {"id": "brief", "icon": "sunrise", "description": "Scrape Elena TikTok, TBPN, All-In for new content — runs the morning source pipeline", "button": True},
+    {"id": "draft", "icon": "file-text", "description": "Show the topic plan and draft the newsletter — runs the full HTML pipeline", "button": True},
     {"id": "status", "icon": "activity", "description": "Check system and database status", "button": False},
     {"id": "transcript", "icon": "captions", "description": "Find a quote or transcript segment", "button": False},
     {"id": "linkedin", "icon": "share-2", "description": "Create a LinkedIn post", "button": False},
-    {"id": "model", "icon": "cpu", "description": "Switch AI model", "button": True},
+    {"id": "model", "icon": "cpu", "description": "Switch AI model — opens model selector with all available options", "button": True},
 ]
 
 INTENTS = {
@@ -709,9 +739,9 @@ INTENTS = {
 AVAILABLE_MODELS = {
     "hermes": {"id": "openai/gpt-4o", "label": "Hermes (Default)", "description": "Your default model — recommended"},
     "gpt-4o": {"id": "openai/gpt-4o", "label": "GPT-4o", "description": "Fast and powerful"},
-    "claude-sonnet": {"id": "anthropic/claude-sonnet-4-5", "label": "Claude Sonnet", "description": "Best for writing"},
-    "claude-opus": {"id": "anthropic/claude-opus-4-5", "label": "Claude Opus", "description": "Most capable"},
-    "gemini-flash": {"id": "google/gemini-flash-1.5", "label": "Gemini Flash", "description": "Fastest"},
+    "claude-sonnet": {"id": "anthropic/claude-sonnet-4-6", "label": "Claude Sonnet 4.6", "description": "Best for writing and analysis"},
+    "claude-opus": {"id": "anthropic/claude-opus-4-8", "label": "Claude Opus 4.8", "description": "Most capable — deep reasoning"},
+    "gemini-flash": {"id": "google/gemini-2.5-flash", "label": "Gemini 2.5 Flash", "description": "Fastest"},
     "perplexity": {"id": "perplexity/sonar-pro", "label": "Perplexity Sonar", "description": "Live web search"},
 }
 
@@ -1159,7 +1189,17 @@ def classify_intent(text: str, command: str | None = None) -> str:
         "let's draft", "lets draft", "ready to generate", "start drafting",
         "draft an edition", "draft the edition", "draft this edition",
         "draft the html", "draft html", "show me the preview",
+        "draft this week", "draft this weeks", "draft me the newsletter",
+        "draft me a newsletter", "write the newsletter", "write the edition",
+        "produce the newsletter", "produce the full html", "produce the html",
+        "produce the full", "write me the newsletter", "create the newsletter",
+        "build the newsletter", "please draft", "full html preview",
     )):
+        return "draft"
+    # Broad catch: "draft ... newsletter/edition" or "write ... newsletter"
+    _draft_verbs = ("draft", "write up", "produce", "generate", "create")
+    _newsletter_nouns = ("newsletter", "edition", "this week", "weekly", "html preview")
+    if any(v in lower for v in _draft_verbs) and any(n in lower for n in _newsletter_nouns):
         return "draft"
     if any(
         x in lower
@@ -1842,6 +1882,29 @@ async def on_message(message: cl.Message):
         "okay let's go",
         "lets go",
         "let's go",
+        "produce",
+        "produce it",
+        "produce the html",
+        "produce the full html",
+        "produce the full html preview",
+        "produce the full html preview please",
+        "yes please",
+        "yes go ahead",
+        "approved",
+        "approve",
+        "run it",
+        "start it",
+        "begin",
+        "do it",
+        "okay do it",
+        "ok do it",
+        "proceed",
+        "confirm",
+        "confirmed",
+        "generate it",
+        "generate the html",
+        "generate the newsletter",
+        "yes generate",
     }:
         cl.user_session.set("awaiting_draft_approval", False)
         response = await generate_and_present_draft(
@@ -1920,7 +1983,13 @@ async def on_message(message: cl.Message):
         elif intent_key in ("tiktok_check", "source_latest"):
             response = await handle_source_check(text, history)
         else:
-            response = await analyse_with_hermes(text, history)
+            # Guard: if message has draft+newsletter intent that escaped classify_intent
+            _has_draft_verb = any(v in lower_text for v in ("draft", "produce", "write", "generate", "create"))
+            _has_newsletter_noun = any(n in lower_text for n in ("newsletter", "edition", "html preview"))
+            if _has_draft_verb and _has_newsletter_noun and len(lower_text.split()) > 2:
+                response = await handle_draft()
+            else:
+                response = await analyse_with_hermes(text, history)
     except Exception as exc:
         response = f"That action failed before completion: {str(exc)[:260]}"
 
