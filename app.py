@@ -1534,11 +1534,33 @@ async def handle_research(text: str, history: list[dict]) -> str:
         phrase in text.lower()
         for phrase in ("deep research", "deep dive")
     )
+
+    # Strip research verb prefixes to isolate the actual query
     query = re.sub(
         r"(?i)^\s*(do\s+)?(deep\s+research\s+on|deep\s+dive\s+on|research|find out about|look into|tell me about)\s*",
         "",
         text,
     ).strip()
+
+    # If the message is very short, try to extract the real topic from conversation history
+    if len(query.strip()) < 20 and len(history) > 2:
+        for msg in reversed(history[-8:]):
+            if msg.get("role") == "user" and len(msg.get("content", "")) > 15:
+                prev_lower = msg["content"].lower()
+                skip_words = {"yes", "ok", "okay", "go", "go on", "go ahead", "continue",
+                              "do it", "sure", "proceed", "run it", "do the research",
+                              "yes please", "yes go ahead", "now", "start"}
+                if not any(prev_lower.strip() == w or prev_lower.strip() == w + " " for w in skip_words):
+                    # Also strip research verbs from the fallback topic
+                    candidate = re.sub(
+                        r"(?i)^\s*(do\s+)?(deep\s+research\s+on|deep\s+dive\s+on|research|find out about|look into|tell me about)\s*",
+                        "",
+                        msg["content"],
+                    ).strip()
+                    if candidate:
+                        query = candidate
+                        break
+
     if not query:
         answer = await cl.AskUserMessage(
             content="What company, fund, deal, or market signal should I research?",
@@ -1547,6 +1569,7 @@ async def handle_research(text: str, history: list[dict]) -> str:
         query = (answer or {}).get("output", "").strip()
         if not query:
             return "Research paused. Send the topic when you are ready."
+
     async with cl.Step(name="Searching live sources", type="tool", icon="search", show_input=True, default_open=True) as step:
         step.input = f"{query} ({'deep research' if deep else 'standard research'})"
         try:
@@ -1559,7 +1582,22 @@ async def handle_research(text: str, history: list[dict]) -> str:
         except Exception as exc:
             result = {"error": str(exc)}
             step.output = f"Failed: {str(exc)[:300]}"
-    return await analyse_with_hermes(text or query, history, result)
+
+    response = await analyse_with_hermes(text or query, history, result)
+
+    # Offer to save the researched topic to the active edition
+    if response and not (isinstance(result, dict) and result.get("error")):
+        actions = [
+            cl.Action(
+                name="save_research_as_topic",
+                payload={"topic": query[:150]},
+                label="Save to edition",
+                icon="bookmark",
+            ),
+        ]
+        await cl.Message(content="", actions=actions, author=AUTHOR).send()
+
+    return response
 
 
 async def handle_transcript(text: str, history: list[dict]) -> str:
@@ -1759,14 +1797,31 @@ async def get_generated_issue(issue_id: str) -> dict:
 
 async def generate_and_present_draft(trigger_reason: str) -> str:
     """Start the real pipeline, wait for stored HTML, then render it."""
-    from intelligence.tools import draft_full_weekly_newsletter
+    try:
+        from intelligence.tools import draft_full_weekly_newsletter
+    except ImportError as exc:
+        err_msg = (
+            f"Pipeline import failed: {exc}\n\n"
+            "Check that /root/herald/agents/orchestrator.py exists and "
+            "that the herald package is on PYTHONPATH."
+        )
+        await cl.Message(content=err_msg, author=AUTHOR).send()
+        return err_msg
 
-    result = await draft_full_weekly_newsletter(
-        trigger_reason,
-        return_issue_handle=True,
-    )
+    try:
+        result = await draft_full_weekly_newsletter(
+            trigger_reason,
+            return_issue_handle=True,
+        )
+    except Exception as exc:
+        err_msg = f"Pipeline error during startup: {str(exc)[:300]}\n\nCheck pm2 logs herald-v2 for the full traceback."
+        await cl.Message(content=err_msg, author=AUTHOR).send()
+        return err_msg
+
     if not result.get("started"):
-        return result.get("note") or result.get("error") or "The draft did not start."
+        err_msg = result.get("note") or result.get("error") or "The draft did not start — no error detail returned."
+        await cl.Message(content=f"Pipeline did not start: {err_msg}", author=AUTHOR).send()
+        return err_msg
 
     await cl.Message(
         content=(
@@ -1929,13 +1984,16 @@ async def handle_source_check(message: str, history: list[dict]) -> str:
                 f"Date: {item.get('scraped_at','')[:10]}\n{(item.get('raw_text') or '')[:400]}"
                 for item in items
             )
-            summary = await run_hermes(
-                f"Today is {today}. Summarise the most recent and relevant content from "
-                f"{source_name} for a VC secondaries newsletter editor. "
-                f"Be specific about dates and topics covered. "
-                f"Identify the 2-3 most interesting angles for Dom's newsletter. "
-                f"Content:\n{content_preview}"
-            )
+            summary = await run_hermes([
+                {"role": "system", "content": get_herald_system()},
+                {"role": "user", "content": (
+                    f"Today is {today}. Summarise the most recent and relevant content from "
+                    f"{source_name} for a VC secondaries newsletter editor. "
+                    f"Be specific about dates and topics covered. "
+                    f"Identify the 2-3 most interesting angles for Dom's newsletter. "
+                    f"Content:\n{content_preview}"
+                )},
+            ])
             return sanitise_response(summary)
 
         except Exception as exc:
@@ -2001,6 +2059,39 @@ async def on_message(message: cl.Message):
     command = (message.command or "").lower() or None
     text = message.content.strip()
     lower_text = re.sub(r"[^\w\s']", "", text.lower()).strip()
+
+    # ── Pending intent: route continuation messages to stored pending action ──
+    CONTINUATION_WORDS = {
+        "yes", "ok", "okay", "go", "go on", "go ahead", "continue", "do it",
+        "sure", "proceed", "run it", "do the research", "yes please",
+        "yes go ahead", "now", "start", "sounds good", "perfect",
+    }
+    if not command and lower_text in CONTINUATION_WORDS:
+        pending = cl.user_session.get("pending_intent")
+        if pending:
+            pending_type = pending.get("type", "")
+            pending_topic = pending.get("topic", "")
+            cl.user_session.set("pending_intent", None)
+            if pending_type == "research" and pending_topic:
+                response = await handle_research(pending_topic, history)
+                if response:
+                    await stream_response(response)
+                history.extend([
+                    {"role": "user", "content": text},
+                    {"role": "assistant", "content": response},
+                ])
+                cl.user_session.set("history", history[-30:])
+                return
+            elif pending_type == "draft":
+                response = await handle_draft()
+                if response:
+                    await stream_response(response)
+                history.extend([
+                    {"role": "user", "content": text},
+                    {"role": "assistant", "content": response or ""},
+                ])
+                cl.user_session.set("history", history[-30:])
+                return
 
     if cl.user_session.get("awaiting_draft_approval") and lower_text in {
         "yes",
@@ -2141,7 +2232,11 @@ async def on_message(message: cl.Message):
                 text = (answer or {}).get("output", "").strip()
             response = await handle_url(text, history) if URL_RE.search(text) else "Ingestion paused. Send the URL when ready."
         elif intent_key == "research":
+            # Store as pending so that a short follow-up ("yes", "go on") retriggers it
+            cl.user_session.set("pending_intent", {"type": "research", "topic": text})
             response = await handle_research(text, history)
+            # Clear pending after successful execution
+            cl.user_session.set("pending_intent", None)
         elif intent_key == "transcript":
             response = await handle_transcript(text, history)
         elif intent_key == "save_topic":
@@ -2250,6 +2345,19 @@ async def on_switch_model(action):
         content=f"Switched to {model['label']}. {model['description']}.",
         author=AUTHOR,
     ).send()
+    await action.remove()
+
+
+@cl.action_callback("save_research_as_topic")
+async def on_save_research_topic(action):
+    """Save a researched topic directly to the active edition plan."""
+    topic = action.payload.get("topic", "").strip()
+    if not topic:
+        await cl.Message(content="No topic to save.", author=AUTHOR).send()
+        await action.remove()
+        return
+    response = await handle_save_topic(topic)
+    await cl.Message(content=response, author=AUTHOR).send()
     await action.remove()
 
 
