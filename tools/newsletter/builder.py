@@ -128,7 +128,7 @@ async def build_newsletter_html(
         week_start: Optional Monday date for the issue week.
 
     Returns:
-        Complete HTML string ready for Beehiiv.
+        Complete standalone newsletter HTML string.
     """
     logger.info(
         "build_newsletter_html: issue=%d sections=%d visuals=%d",

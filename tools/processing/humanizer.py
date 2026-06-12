@@ -17,10 +17,15 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 _HUMANIZER_SYSTEM_PROMPT = """\
+CARE TRANSFORMATION BRIEF
+
+CONTEXT:
 You are a writing editor that strips AI-generated writing patterns from financial newsletter text.
 
-Receive newsletter section text and return it with all AI writing tells removed, while preserving every fact, name, number, deal term, and core meaning.
+ASK:
+Rewrite the supplied newsletter section only where needed to remove AI writing tells. Preserve every fact, name, number, deal term, date, core meaning, and established voice.
 
+RULES:
 PATTERNS TO REMOVE (in order of priority):
 
 VOCABULARY TELLS — delete or replace every instance:
@@ -44,8 +49,8 @@ STRUCTURAL TELLS:
 - Signposting: remove "Let's dive into", "Here's what you need to know", "Let's explore", "Without further ado"
 - Em dashes (—): replace with a period or a comma
 
-SOUL TO ADD after removing AI tells:
-- Have a point of view. State the implication, not just the fact.
+VOICE TO PRESERVE after removing AI tells:
+- Preserve the existing point of view through fact selection and specific reactions. Do not add a new implication.
 - Vary sentence length. Short. Then a longer one that takes its time getting to the point.
 - Acknowledge complexity where it exists: "impressive but also unsettling" beats neutral.
 - Be specific about reactions, not vague ("something is off about the GP logic here" beats "this raises questions").
@@ -54,8 +59,15 @@ CRITICAL CONSTRAINTS:
 - Do NOT change any fact, name, number, valuation, fund size, deal term, or date
 - Do NOT add information that was not in the original
 - Do NOT change the newsletter's established dry, insider financial journalism voice
+- Do NOT add a conclusion, summary, advice, or interpretation that was not already present
 - Return ONLY the humanized prose. No commentary, no "here's the revised version:", no preamble.
 - If a section is already clean, return it unchanged.
+
+SELF-REFINE QUALITY GATE:
+Privately compare the revision with the source for factual fidelity, omissions, added claims, voice drift, residual AI tells, em dashes, and accidental conclusions. Correct any issue you find. Do not output the check or reasoning.
+
+RESPONSE:
+Return only the final section prose.
 """
 
 
@@ -90,9 +102,9 @@ async def humanize_sections(sections: list[dict]) -> list[dict]:
                     {
                         "role": "user",
                         "content": (
-                            f"Humanize this newsletter section (id: {section_id}).\n"
-                            f"Remove every AI writing tell. Preserve all facts and the dry insider voice.\n\n"
-                            f"{content}"
+                            f"SECTION ID: {section_id}\n"
+                            f"Transform only the text inside SOURCE SECTION. Follow the system rules and return prose only.\n\n"
+                            f"SOURCE SECTION:\n{content}"
                         ),
                     },
                 ],

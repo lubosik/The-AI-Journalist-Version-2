@@ -199,6 +199,190 @@
     }
   }
 
+  function formatUtcLabel(isoString) {
+    try {
+      var d = new Date(isoString);
+      return d.toLocaleString('en-GB', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: 'UTC',
+        hour12: false
+      }) + ' UTC';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function decorateMessageTimestamps() {
+    var messages = document.querySelectorAll(
+      '[class*="message"][class*="user"], [class*="message"][class*="assistant"], ' +
+      '[class*="human-message"], [class*="ai-message"]'
+    );
+    messages.forEach(function (messageEl) {
+      if (messageEl.querySelector('.herald-message-time')) return;
+      var timestamp = messageEl.getAttribute('data-herald-ts');
+      if (!timestamp) {
+        var existingTime = messageEl.querySelector('time');
+        timestamp = existingTime && existingTime.getAttribute('datetime');
+      }
+      if (!timestamp) {
+        timestamp = new Date().toISOString();
+        messageEl.setAttribute('data-herald-ts', timestamp);
+      }
+      var footer = document.createElement('div');
+      footer.className = 'herald-message-time';
+      footer.textContent = formatUtcLabel(timestamp);
+      messageEl.appendChild(footer);
+    });
+  }
+
+  function urlBase64ToUint8Array(base64String) {
+    var padding = '='.repeat((4 - base64String.length % 4) % 4);
+    var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    var rawData = window.atob(base64);
+    return Uint8Array.from(Array.from(rawData).map(function (char) {
+      return char.charCodeAt(0);
+    }));
+  }
+
+  async function enableNotifications(button) {
+    try {
+      var permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        button.textContent = 'Notifications blocked';
+        return;
+      }
+      var registration = await navigator.serviceWorker.ready;
+      var configResponse = await fetch('/herald/push/config');
+      if (!configResponse.ok) throw new Error('Push configuration unavailable');
+      var config = await configResponse.json();
+      var subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(config.publicKey)
+      });
+      var response = await fetch('/herald/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscription: subscription.toJSON() })
+      });
+      if (!response.ok) throw new Error('Subscription failed');
+      button.textContent = 'Notifications enabled';
+      button.disabled = true;
+    } catch (_) {
+      button.textContent = 'Enable notifications';
+    }
+  }
+
+  function injectNotificationButton() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    if (document.getElementById('herald-enable-notifications')) return;
+    var sidebar = findSidebar();
+    if (!sidebar) return;
+    var button = document.createElement('button');
+    button.id = 'herald-enable-notifications';
+    button.type = 'button';
+    button.textContent = 'Enable notifications';
+    button.disabled = false;
+    button.style.cssText = [
+      'width:calc(100% - 24px)',
+      'margin:12px',
+      'padding:10px 12px',
+      'border-radius:999px',
+      'border:1px solid rgba(201,168,76,0.28)',
+      'background:rgba(201,168,76,0.08)',
+      'color:#c9a84c',
+      'font:500 12px Inter,sans-serif',
+      'cursor:pointer'
+    ].join(';');
+    button.addEventListener('click', function () {
+      enableNotifications(button);
+    });
+    sidebar.appendChild(button);
+    if (Notification.permission === 'granted') {
+      navigator.serviceWorker.ready.then(function (registration) {
+        return registration.pushManager.getSubscription();
+      }).then(function (subscription) {
+        if (subscription) {
+          button.textContent = 'Notifications enabled';
+          button.disabled = true;
+        }
+      }).catch(function () {});
+    }
+  }
+
+  var _workspaceUsers = null;
+
+  async function getWorkspaceUsers() {
+    if (_workspaceUsers) return _workspaceUsers;
+    try {
+      var response = await fetch('/herald/workspace/users');
+      var payload = await response.json();
+      _workspaceUsers = payload.users || [];
+    } catch (_) {
+      _workspaceUsers = [];
+    }
+    return _workspaceUsers;
+  }
+
+  function hideMentionMenu() {
+    var menu = document.getElementById('herald-mention-menu');
+    if (menu) menu.remove();
+  }
+
+  async function showMentionMenu(textarea) {
+    var users = await getWorkspaceUsers();
+    hideMentionMenu();
+    if (!users.length) return;
+    var menu = document.createElement('div');
+    menu.id = 'herald-mention-menu';
+    menu.style.cssText = [
+      'position:fixed',
+      'z-index:9999',
+      'left:50%',
+      'bottom:92px',
+      'transform:translateX(-50%)',
+      'width:min(420px,calc(100vw - 32px))',
+      'padding:8px',
+      'border:1px solid rgba(201,168,76,0.28)',
+      'border-radius:14px',
+      'background:rgba(7,7,15,0.97)',
+      'box-shadow:0 18px 48px rgba(0,0,0,0.45)'
+    ].join(';');
+    users.forEach(function (user) {
+      var option = document.createElement('button');
+      option.type = 'button';
+      option.textContent = '@' + user.identifier + '  ' + user.displayName;
+      option.style.cssText = 'display:block;width:100%;padding:10px;border:0;background:transparent;color:#f2eee6;text-align:left;cursor:pointer;';
+      option.addEventListener('click', function () {
+        var cursor = textarea.selectionStart;
+        var before = textarea.value.slice(0, cursor);
+        var after = textarea.value.slice(cursor);
+        textarea.value = before.replace(/@[\w.-]*$/, '@' + user.identifier + ' ') + after;
+        textarea.focus();
+        hideMentionMenu();
+      });
+      menu.appendChild(option);
+    });
+    document.body.appendChild(menu);
+  }
+
+  function bindMentionPicker() {
+    var textarea = document.querySelector('textarea');
+    if (!textarea || textarea.dataset.heraldMentionsBound) return;
+    textarea.dataset.heraldMentionsBound = 'true';
+    textarea.addEventListener('input', function () {
+      var before = textarea.value.slice(0, textarea.selectionStart);
+      if (/@[\w.-]*$/.test(before)) {
+        showMentionMenu(textarea);
+      } else {
+        hideMentionMenu();
+      }
+    });
+  }
+
   var _observer = null;
 
   function startObserver() {
@@ -211,6 +395,9 @@
       syncOrbital();
       applyBranding();
       syncSidebar();
+      decorateMessageTimestamps();
+      injectNotificationButton();
+      bindMentionPicker();
     });
     _observer.observe(target, { childList: true, subtree: true });
   }
@@ -220,6 +407,9 @@
     setTimeout(function () {
       syncOrbital();
       syncSidebar();
+      decorateMessageTimestamps();
+      injectNotificationButton();
+      bindMentionPicker();
       startObserver();
     }, 150);
     // Re-check sidebar after short delay

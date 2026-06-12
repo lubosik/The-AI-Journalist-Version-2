@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HERALD Newsletter Studio</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #08090d;
+      --panel: rgba(18, 20, 28, 0.94);
+      --panel-2: rgba(10, 11, 18, 0.96);
+      --border: rgba(201, 168, 76, 0.24);
+      --text: #f2eee6;
+      --muted: #a29a8d;
+      --accent: #c9a84c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, system-ui, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(201, 168, 76, 0.14), transparent 30%),
+        radial-gradient(circle at bottom right, rgba(77, 102, 255, 0.12), transparent 25%),
+        var(--bg);
+      color: var(--text);
+    }
+    .shell {
+      display: grid;
+      grid-template-columns: minmax(320px, 420px) 1fr;
+      min-height: 100vh;
+    }
+    .panel {
+      padding: 24px;
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      backdrop-filter: blur(18px);
+    }
+    .preview {
+      padding: 24px;
+      background: var(--panel-2);
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 24px;
+      font-weight: 700;
+    }
+    p, label {
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .card {
+      margin-top: 18px;
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.02);
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+    }
+    textarea, select, input[type="text"], input[type="file"] {
+      width: 100%;
+      margin-top: 8px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text);
+      font: inherit;
+    }
+    textarea { min-height: 220px; resize: vertical; }
+    .row {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: 1fr 1fr;
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+    button, .link-button {
+      appearance: none;
+      border: 1px solid rgba(201, 168, 76, 0.34);
+      background: linear-gradient(180deg, rgba(201, 168, 76, 0.16), rgba(201, 168, 76, 0.08));
+      color: var(--text);
+      border-radius: 999px;
+      padding: 10px 16px;
+      cursor: pointer;
+      font: inherit;
+      text-decoration: none;
+    }
+    button.secondary, .link-button.secondary {
+      border-color: rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.05);
+    }
+    .status {
+      margin-top: 12px;
+      font-size: 13px;
+      color: var(--accent);
+    }
+    iframe {
+      width: 100%;
+      min-height: calc(100vh - 48px);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: white;
+      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.35);
+    }
+    @media (max-width: 980px) {
+      .shell { grid-template-columns: 1fr; }
+      .panel { border-right: 0; border-bottom: 1px solid var(--border); }
+      iframe { min-height: 60vh; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="panel">
+      <h1>Newsletter Studio</h1>
+      <p>Edit the current draft, upload a visual, place it, and export the updated HTML.</p>
+
+      <div class="card">
+        <label for="rawHtml">HTML</label>
+        <textarea id="rawHtml" spellcheck="false"></textarea>
+        <div class="actions">
+          <button id="applyHtml">Apply HTML</button>
+          <button id="saveIssue">Save to HERALD</button>
+          <button id="downloadHtml" class="secondary">Download HTML</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <label for="imageFile">Image</label>
+        <input id="imageFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+        <label for="imageCaption">Caption</label>
+        <input id="imageCaption" type="text" placeholder="Optional image caption">
+        <div class="row">
+          <div>
+            <label for="imagePosition">Placement</label>
+            <select id="imagePosition">
+              <option value="top">Top</option>
+              <option value="below-headline">Below headline</option>
+              <option value="middle">Middle</option>
+              <option value="bottom">Bottom</option>
+            </select>
+          </div>
+          <div>
+            <label for="imageWidth">Width</label>
+            <select id="imageWidth">
+              <option value="100%">Full</option>
+              <option value="80%">Large</option>
+              <option value="60%">Medium</option>
+            </select>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="insertImage">Insert Image</button>
+        </div>
+      </div>
+
+      <div class="status" id="status">Loading preview…</div>
+    </aside>
+
+    <main class="preview">
+      <iframe id="previewFrame" title="Newsletter preview"></iframe>
+    </main>
+  </div>
+
+  <script>
+    (function () {
+      const params = new URLSearchParams(window.location.search);
+      const previewPath = params.get('preview') || '';
+      const issueId = params.get('issue') || '';
+      const rawHtml = document.getElementById('rawHtml');
+      const previewFrame = document.getElementById('previewFrame');
+      const status = document.getElementById('status');
+      let currentHtml = '';
+
+      function setStatus(text) {
+        status.textContent = text;
+      }
+
+      function updatePreview(html) {
+        currentHtml = html;
+        rawHtml.value = html;
+        previewFrame.srcdoc = html;
+        setStatus('Preview updated.');
+      }
+
+      async function loadPreview() {
+        if (!previewPath) {
+          setStatus('No preview URL provided. Paste HTML to begin.');
+          return;
+        }
+        try {
+          const response = await fetch(previewPath);
+          const html = await response.text();
+          updatePreview(html);
+          setStatus('Preview loaded from current draft.');
+        } catch (error) {
+          setStatus('Could not load preview HTML.');
+        }
+      }
+
+      function downloadHtml() {
+        const blob = new Blob([rawHtml.value], { type: 'text/html;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = 'herald-newsletter-edited.html';
+        anchor.click();
+        URL.revokeObjectURL(url);
+      }
+
+      function buildImageBlock(src, caption, width) {
+        const captionHtml = caption
+          ? '<p style="margin:10px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.5;color:#666666;">' +
+              caption.replace(/</g, '&lt;').replace(/>/g, '&gt;') +
+            '</p>'
+          : '';
+        return (
+          '<div data-herald-studio-image="true" style="margin:24px auto;text-align:center;">' +
+            '<img src="' + src + '" alt="Newsletter visual" style="display:block;margin:0 auto;max-width:' + width + ';width:' + width + ';height:auto;border-radius:16px;" />' +
+            captionHtml +
+          '</div>'
+        );
+      }
+
+      function insertImage(dataUrl) {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(rawHtml.value, 'text/html');
+        doc.querySelectorAll('[data-herald-studio-image="true"]').forEach((node) => node.remove());
+
+        const placement = document.getElementById('imagePosition').value;
+        const caption = document.getElementById('imageCaption').value.trim();
+        const width = document.getElementById('imageWidth').value;
+        const imageHtml = buildImageBlock(dataUrl, caption, width);
+
+        const wrapper = doc.createElement('div');
+        wrapper.innerHTML = imageHtml;
+        const block = wrapper.firstChild;
+
+        const body = doc.body;
+        const headline = doc.querySelector('h1, h2, p');
+        const paragraphs = Array.from(doc.querySelectorAll('p'));
+
+        if (placement === 'top' && body.firstChild) {
+          body.insertBefore(block, body.firstChild);
+        } else if (placement === 'below-headline' && headline && headline.parentNode) {
+          headline.parentNode.insertBefore(block, headline.nextSibling);
+        } else if (placement === 'middle' && paragraphs.length > 1) {
+          const midpoint = paragraphs[Math.floor(paragraphs.length / 2)];
+          midpoint.parentNode.insertBefore(block, midpoint);
+        } else {
+          body.appendChild(block);
+        }
+
+        updatePreview('<!DOCTYPE html>\n' + doc.documentElement.outerHTML);
+      }
+
+      async function uploadImage(file) {
+        const formData = new FormData();
+        formData.append('image', file);
+        const response = await fetch('/herald/studio/upload', {
+          method: 'POST',
+          body: formData
+        });
+        if (!response.ok) throw new Error('Image upload failed');
+        return response.json();
+      }
+
+      async function saveIssue() {
+        if (!issueId) {
+          setStatus('This preview is not linked to a stored issue. Download the HTML instead.');
+          return;
+        }
+        setStatus('Saving draft...');
+        const response = await fetch('/herald/studio/issues/' + encodeURIComponent(issueId), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ html: rawHtml.value })
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          setStatus(payload.detail || 'Save failed.');
+          return;
+        }
+        setStatus('Saved to HERALD.');
+      }
+
+      document.getElementById('applyHtml').addEventListener('click', function () {
+        updatePreview(rawHtml.value);
+      });
+
+      document.getElementById('downloadHtml').addEventListener('click', downloadHtml);
+      document.getElementById('saveIssue').addEventListener('click', saveIssue);
+
+      document.getElementById('insertImage').addEventListener('click', function () {
+        const file = document.getElementById('imageFile').files[0];
+        if (!file) {
+          setStatus('Choose an image first.');
+          return;
+        }
+        setStatus('Uploading image...');
+        uploadImage(file).then(function (payload) {
+          insertImage(payload.url);
+          setStatus('Image inserted. Save to HERALD when ready.');
+        }).catch(function () {
+          setStatus('Image upload failed.');
+        });
+      });
+
+      loadPreview();
+    })();
+  </script>
+</body>
+</html>

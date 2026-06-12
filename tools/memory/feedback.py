@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from db.client import get_client
+from intelligence.prompt_architecture import current_date_context
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +128,12 @@ async def is_feedback(message: str) -> dict:
                     "content": (
                         "You decide if a message from Dom is a correction, preference, or instruction "
                         "about how his HERALD newsletter should be written.\n\n"
+                        "Framework: CARE classification.\n"
+                        f"Context: {current_date_context()}\n"
+                        "Ask: classify only the supplied message.\n"
+                        "Rules: explicit writing corrections, persistent style preferences, and newsletter "
+                        "instructions are feedback. Research questions, source requests, and operational commands "
+                        "are not feedback. Do not infer an unstated preference.\n\n"
                         "Examples of feedback: 'make it shorter', 'stop using the word synergies', "
                         "'the tone is too formal', 'always mention the deal size', 'less jargon'.\n\n"
                         "Examples of NOT feedback: 'what is Sequoia up to?', 'show me the latest items', "

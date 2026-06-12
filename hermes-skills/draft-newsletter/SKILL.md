@@ -25,8 +25,8 @@ After confirmation:
 }
 ```
 
-4. Run `python3 herald_cli.py save-draft /tmp/herald_draft.json --push-to-beehiiv`.
-5. Report sections, Beehiiv draft status, and that HTML is available.
+4. Run `python3 herald_cli.py save-draft /tmp/herald_draft.json`.
+5. Report sections and that HTML is available in Newsletter Studio.
 
-Use Dom's stored preferences and voice hooks. Never publish; create a Beehiiv
-draft only. Publishing requires the explicit approval button.
+Use Dom's stored preferences and voice hooks. Store the draft in HERALD only.
+The approval button records approval inside this platform.

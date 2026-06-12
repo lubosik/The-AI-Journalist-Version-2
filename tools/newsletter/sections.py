@@ -2,7 +2,7 @@
 Section rendering utilities for the HERALD newsletter.
 
 Each function takes structured content and returns an inline-styled HTML string
-suitable for Beehiiv and general email client delivery.
+suitable for general email client delivery.
 
 Design system:
   Background:     #F5F0E8
@@ -17,7 +17,7 @@ Design system:
 
 import html
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -530,7 +530,21 @@ def render_satire_section(content: str) -> str:
     return "".join(parts)
 
 
-_DEFAULT_FOOTER_NOTE = "You know a name I should? Hit reply.\n\n— D"
+_DEFAULT_FOOTER_NOTE = "You know a name I should? Hit reply.\n\nD"
+_MANDATORY_DISCLOSURE = (
+    "This newsletter is for informational purposes only and reflects market commentary. "
+    "It is not investment advice, a recommendation, or an offer or solicitation to buy or sell any security. "
+    "Private-company valuations, IPO targets, secondary-market indications, and reported financials are based on "
+    "third-party sources or public filings believed reliable but not independently verified and may change materially.\n\n"
+    "Important Disclosures: This material has been prepared for informational purposes only. None of the information "
+    "provided represents a recommendation, an offer or the solicitation of an offer to buy or sell any security. "
+    "The information provided does not constitute investment, legal, tax, or accounting advice. You should consult "
+    "with qualified professionals before making any investment decisions. Investing in private securities involves "
+    "substantial risk, including the potential loss of principal. Private securities are typically illiquid, have "
+    "limited pricing transparency, and often require longer holding periods. These investments are available exclusively "
+    "to qualified accredited investors and offer no guarantee of returns. An IPO or other liquidity event is not guaranteed. "
+    "Additionally, past performance of private securities does not indicate or predict future results."
+)
 
 
 def render_footer(footer_note: str | None = None) -> str:
@@ -542,7 +556,7 @@ def render_footer(footer_note: str | None = None) -> str:
     Returns:
         Inline-styled HTML string.
     """
-    current_year = datetime.utcnow().year
+    current_year = datetime.now(timezone.utc).year
     note = (footer_note or _DEFAULT_FOOTER_NOTE).strip()
 
     parts: list[str] = []
@@ -565,7 +579,15 @@ def render_footer(footer_note: str | None = None) -> str:
         "</p>"
     )
 
-    # Unsubscribe — Beehiiv will replace {{unsubscribe_url}} server-side
+    disclosure_html = html.escape(_MANDATORY_DISCLOSURE).replace("\n\n", "<br><br>").replace("\n", "<br>")
+    parts.append(
+        f'<p style="margin:0 0 18px 0;font-family:{_FONT_SANS};font-size:11px;'
+        f'line-height:1.7;color:{_COLOR_MUTED};font-style:italic;font-weight:400;">'
+        f"{disclosure_html}"
+        "</p>"
+    )
+
+    # Optional unsubscribe placeholders for a future delivery provider.
     parts.append(
         f'<p style="margin:0 0 12px 0;font-family:{_FONT_SANS};font-size:11px;'
         f'color:{_COLOR_MUTED};">'
@@ -582,8 +604,7 @@ def render_footer(footer_note: str | None = None) -> str:
         f'<p style="margin:0;font-family:{_FONT_SANS};font-size:10px;'
         f'color:{_COLOR_MUTED};line-height:1.6;">'
         f"&copy; {current_year} The Secondaries Intelligence Report. All rights reserved.<br>"
-        "For informational purposes only. Not investment advice.<br>"
-        "Strictly private circulation — VC secondaries market intelligence."
+        "Strictly private circulation. VC secondaries market intelligence."
         "</p>"
     )
 

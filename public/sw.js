@@ -1,5 +1,5 @@
-/* HERALD Intelligence — Service Worker v1 */
-const CACHE_NAME = 'herald-v2-cache-v1';
+/* HERALD Intelligence service worker */
+const CACHE_NAME = 'herald-v2-cache-v2';
 const STATIC_ASSETS = ['/', '/public/herald.css', '/public/manifest.json'];
 
 self.addEventListener('install', (event) => {
@@ -23,6 +23,7 @@ self.addEventListener('push', (event) => {
   const title = data.title || 'HERALD Intelligence';
   const body = data.body || 'New content available';
   const tag = data.tag || 'herald-notification';
+  const notificationData = data.data || {};
 
   event.waitUntil(
     self.registration.showNotification(title, {
@@ -31,7 +32,7 @@ self.addEventListener('push', (event) => {
       badge: '/public/herald-logo.svg',
       tag,
       requireInteraction: data.important || false,
-      data: { url: data.url || '/' },
+      data: { url: notificationData.url || data.url || '/' },
     })
   );
 });

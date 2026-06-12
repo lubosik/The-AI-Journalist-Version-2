@@ -373,10 +373,9 @@ async def download_html() -> dict:
     }
 
 
-async def publish_issue(issue_id: str = "") -> dict:
+async def approve_issue(issue_id: str = "") -> dict:
     from db.client import get_client
     from db.queries import get_latest_newsletter_issue, update_newsletter_issue
-    from newsletter.beehiiv import publish_post
 
     if issue_id:
         result = (
@@ -397,16 +396,11 @@ async def publish_issue(issue_id: str = "") -> dict:
             "success": False,
             "error": (
                 f"Issue {issue.get('issue_number', issue_id)} is "
-                f"{issue.get('status') or 'not publishable'}"
+                f"{issue.get('status') or 'not approvable'}"
             ),
         }
-    post_id = issue.get("beehiiv_post_id")
-    if not post_id:
-        return {"success": False, "error": "Latest issue has no Beehiiv draft ID"}
-    result = await publish_post(post_id)
-    if result.get("success"):
-        update_newsletter_issue(issue["id"], {"status": "scheduled"})
-    return result
+    update_newsletter_issue(issue["id"], {"status": "approved"})
+    return {"success": True, "issue_id": issue["id"], "status": "approved"}
 
 
 async def draft_context() -> dict:
@@ -451,9 +445,8 @@ async def draft_context() -> dict:
     }
 
 
-async def save_draft(path: str, push_to_beehiiv: bool) -> dict:
-    from db.queries import insert_newsletter_issue, update_newsletter_issue
-    from newsletter.beehiiv import push_to_beehiiv_draft
+async def save_draft(path: str) -> dict:
+    from db.queries import insert_newsletter_issue
     from newsletter.builder import build_newsletter_html, build_plain_text
     from tracking.topic_store import mark_topics_used
 
@@ -488,29 +481,12 @@ async def save_draft(path: str, push_to_beehiiv: bool) -> dict:
             "status": "draft",
         }
     )
-    beehiiv = {"success": False, "error": "Beehiiv push not requested"}
-    if push_to_beehiiv:
-        beehiiv = await push_to_beehiiv_draft(
-            html,
-            payload["subject_line"],
-            payload["preview_text"],
-            issue_number,
-        )
-        if beehiiv.get("success"):
-            update_newsletter_issue(
-                issue_id,
-                {
-                    "beehiiv_post_id": beehiiv.get("post_id"),
-                    "beehiiv_url": beehiiv.get("web_url") or beehiiv.get("url"),
-                },
-            )
     mark_topics_used(int(payload.get("edition_number", issue_number)))
     return {
         "success": True,
         "issue_id": issue_id,
         "issue_number": issue_number,
         "html_bytes": len(html.encode("utf-8")),
-        "beehiiv": beehiiv,
     }
 
 
@@ -535,12 +511,11 @@ def parser() -> argparse.ArgumentParser:
     linkedin_parser = commands.add_parser("linkedin")
     linkedin_parser.add_argument("topic")
     commands.add_parser("download-html")
-    publish = commands.add_parser("publish-issue")
-    publish.add_argument("issue_id")
+    approve = commands.add_parser("approve-issue")
+    approve.add_argument("issue_id")
     commands.add_parser("draft-context")
     draft = commands.add_parser("save-draft")
     draft.add_argument("path")
-    draft.add_argument("--push-to-beehiiv", action="store_true")
     return cli
 
 
@@ -556,9 +531,9 @@ async def main() -> None:
         "find-transcript": lambda: find_transcript(args),
         "linkedin": lambda: linkedin(args),
         "download-html": download_html,
-        "publish-issue": lambda: publish_issue(args.issue_id),
+        "approve-issue": lambda: approve_issue(args.issue_id),
         "draft-context": draft_context,
-        "save-draft": lambda: save_draft(args.path, args.push_to_beehiiv),
+        "save-draft": lambda: save_draft(args.path),
     }
     try:
         emit(await handlers[args.command]())

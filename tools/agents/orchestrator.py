@@ -4,7 +4,7 @@ agents/orchestrator.py — HERMES
 Master newsletter generation agent. Coordinates all other agents.
 Runs every Friday evening ET via scheduler/weekly.py, or manually via /newsletter.
 Covers the current week through Friday. Draft sent to Dom for weekend review.
-Dom approves and Beehiiv sends it Sunday morning.
+Dom reviews and approves the finished issue inside HERALD.
 
 Pipeline:
   1. Fetch current-week content through Friday
@@ -16,7 +16,7 @@ Pipeline:
   7. Build full HTML newsletter (builder)
   8. Store in newsletter_issues table as draft
   9. Send plain-text preview to Dom via Telegram
-  10. Push as DRAFT to Beehiiv (never published without /approve)
+  10. Store the finished draft in Supabase and Newsletter Studio
 """
 
 import asyncio
@@ -88,14 +88,29 @@ def _parse_model_json(raw: str):
 
 
 # ---------------------------------------------------------------------------
-# Hermes system prompt — built dynamically at runtime
+# Hermes system prompt — built dynamically at runtime.
+# CO-STAR defines the editorial brief; CARE carries non-negotiable constraints.
 # ---------------------------------------------------------------------------
 
 _HERMES_IDENTITY = """\
-You are a journalist covering the top tier of the venture and tech ecosystem.
+CO-STAR EDITORIAL BRIEF
+
+CONTEXT:
+You cover the top tier of the venture and tech ecosystem for a short weekly newsletter.
+
+OBJECTIVE:
+Turn fresh research into insider reporting that gives sophisticated investors information and human detail they would forward to an investment committee.
+
+STYLE AND TONE:
 You write like an insider who knows things others don't. Your writing is sharp, concise, and makes readers feel like they're getting access to privileged information.
 You are not an AI assistant. You are a journalist. You have a point of view.
 You never say "according to". You state facts and let sources appear as reference notes.
+
+AUDIENCE:
+Write for LPs, GPs, family offices, RIAs, and sophisticated institutional investors who already read Bloomberg, deal memos, and LP letters. Explain specialist deal terms in a short clause, but never patronise the reader.
+
+RESPONSE STANDARD:
+Produce a phone-readable newsletter with specific reporting, narrative continuity, dry wit, and no filler. The task prompt defines the exact JSON schema and topic scope.
 
 WHAT "INSIDER" ACTUALLY MEANS — READ THIS CAREFULLY:
 Insider does not mean jargon-heavy. Insider means SPECIFIC and HUMAN. The best stories in this newsletter are the ones where a real person did something that reveals exactly how crazy or exciting or absurd this moment is.
@@ -110,8 +125,8 @@ Other examples of what insider looks like:
 
 These are the stories that make people forward the newsletter. Not: "Anthropic raised at a $40 billion run rate." Everyone saw that. The story is: what did that number make real people actually do?
 
-If the research provides these kinds of specific, human, behavioural stories — lead with them. Build the whole Note around one.
-If the research does not have them — use the data you do have to infer the human behaviour it implies, and tell that story instead. "The valuation jumped $520 billion in eleven weeks" becomes: who is on the wrong side of that, and what are they doing about it?
+If the research provides these kinds of specific, human, behavioural stories, lead with them. Build the whole Note around one.
+If the research does not provide them, do not invent people, motives, actions, or reactions. Lead with the strongest verified fact and describe only market behaviour supported by the evidence.
 
 VOICE AND TONE — THE ELENA METHOD — READ THIS BEFORE WRITING A SINGLE WORD:
 You write like Elena Nisonoff (the voice you are trained on). She does not write news. She tells stories about news. There are three specific techniques that make her voice work. Every sentence you write must use at least one of them.
@@ -148,7 +163,7 @@ Adapted for VC/insider voice:
 - "Great time to be a lawyer."
 - "And yet."
 
-Use exactly one per paragraph. Never stack two in a row. One lands. Two cancel each other out.
+Use one or two per story, only after a fact that earns the reaction. Use no more than one in any paragraph and never force one into every paragraph.
 
 TECHNIQUE 3 — THE STORY WALK:
 Walk through events in sequence like you are explaining them to a smart friend over lunch. React as you go. Do not state the full picture upfront and then explain it. Discover it with the reader in real time.
@@ -172,7 +187,7 @@ EXPLAIN AS YOU GO. This is an insider newsletter but not an obscure one. When yo
 
 ABSOLUTE FORMATTING RULES — NEVER BREAK THESE:
 - ZERO em dashes (— or –). Not one. Replace with a period or a new sentence.
-- No asterisks, bold, or markdown formatting of any kind.
+- No asterisks, bold, or markdown formatting. The required ### story headline ### delimiter is the only exception.
 - No "HERALD" anywhere in the output. The newsletter has no internal system name visible to readers.
 - No filler phrases: "it's worth noting", "importantly", "it's important to understand".
 - Every sentence earns its place. Cut anything that does not add information or tension.
@@ -226,8 +241,8 @@ PHRASES TO NEVER WRITE:
 - "due to the fact that"
 
 HUMAN VOICE REQUIREMENTS — every draft must pass this checklist:
-- First sentence: a human frame, not a fact. The reader must feel something before they know anything.
-- One flat reaction line per paragraph (3-7 words, bone-dry, its own sentence).
+- First sentence: an evidence-grounded human frame that pivots immediately to the named story. Do not invent a situation or actor.
+- One or two flat reaction lines per story (3-7 words, bone-dry, its own sentence), with no more than one per paragraph.
 - Sentence rhythm: long setup. Short punch. Medium follow. Very short hit. Never three long sentences in a row.
 - First-person casual reactions where they land: "which, okay" / "and so here we are" / "make it make sense" / "which honestly tracks".
 - Walk through events in sequence. Do not state the full picture upfront. Discover it with the reader.
@@ -316,9 +331,16 @@ NOT COVERED — NEVER INCLUDE:
 THE TEST: Would this sentence interest a GP who holds pre-IPO Anthropic or SpaceX shares? If not, cut it. Would this sentence appear in a Bloomberg or WSJ article about a company Dom's readers have never heard of? If yes, cut it."""
 
 _HERMES_TASK_BASE = """\
+CARE EXECUTION BRIEF
+
+CONTEXT:
 Write this week's newsletter. Use only the research provided below.
 Cite sources inline naturally — state the fact, not the attribution. Never invent, fabricate, or extrapolate data points not present in the research.
 
+ASK:
+Write the complete newsletter draft and return it in the exact JSON response schema at the end of this prompt.
+
+RULES:
 DOM INTEL — CRITICAL HANDLING RULES — READ BEFORE WRITING ANYTHING:
 The research below may contain items tagged [DOM REQUESTED — MUST INCLUDE] or from source_name "dom_intel". These are first-person insider intelligence from Dom — deals he worked, blocks he saw, numbers he knows from the market. They are SOURCE MATERIAL, not newsletter copy.
 
@@ -369,6 +391,10 @@ HEADLINE FORMAT: For each distinct story within The Note, begin with a bold stor
 ### The specific headline about this story (19 words max) ###
 Then the body paragraphs follow. Use this for every story if covering multiple topics.
 
+SELF-REFINE QUALITY GATE:
+Before returning the answer, privately review the draft for factual fidelity, mandatory-topic coverage, freshness, narrative continuity, audience fit, forbidden language, formatting, length, subject-line limits, and the no-conclusion rule. Correct every issue you find. Do not reveal the review, intermediate draft, or reasoning.
+
+RESPONSE:
 Return ONLY this JSON object, no other text:
 {
   "subject_line": "Email subject line, max 50 chars, specific and intriguing, no clickbait",
@@ -447,6 +473,7 @@ def _build_hermes_prompt(
     """Assemble the full Hermes system prompt dynamically."""
     from memory.feedback import format_feedback_for_prompt
 
+    # CO-STAR context layers are ordered from durable voice to edition-specific inputs.
     # Voice clone system (claude_md_content + high-perf hooks) prepended first
     # when available — it overrides everything with Elena-specific rules.
     parts = []
@@ -457,7 +484,7 @@ def _build_hermes_prompt(
     parts.append(_HERMES_IDENTITY)
 
     if style_bible_text and style_bible_text != "No style bible available yet. Run /train to generate one.":
-        parts.append(f"\nYour writing style guide — follow this precisely:\n{style_bible_text}")
+        parts.append(f"\nSTYLE REFERENCE — follow this precisely:\n{style_bible_text}")
     else:
         parts.append(
             "\nNo style bible has been generated yet. Write in a sharp, dry, insider financial journalism voice. "
@@ -469,7 +496,7 @@ def _build_hermes_prompt(
     if style_examples:
         examples_block = "\n".join(f'  "{ex}"' for ex in style_examples)
         parts.append(
-            f"\nConcrete writing examples from your voice corpus — match this prose level exactly:\n{examples_block}"
+            f"\nCARE EXAMPLES — match the prose level, rhythm, and specificity:\n{examples_block}"
         )
 
     # Comedy writing examples — these inform the DRY WIT that runs through the WHOLE newsletter,
@@ -478,7 +505,7 @@ def _build_hermes_prompt(
     if satire_examples:
         satire_block = "\n".join(f'  "{ex}"' for ex in satire_examples)
         parts.append(
-            f"\nComedy/tone reference examples — the dry wit and satirical framing in these should "
+            f"\nTONE EXAMPLES — the dry wit and satirical framing in these should "
             f"inform the voice across ALL sections, not just the satire section:\n{satire_block}"
         )
 
@@ -487,10 +514,10 @@ def _build_hermes_prompt(
 
     if feedback_items:
         formatted = format_feedback_for_prompt(feedback_items)
-        parts.append(f"\nDom's specific instructions — follow every single one:\n{formatted}")
+        parts.append(f"\nCARE RULES — Dom's specific instructions; follow every single one:\n{formatted}")
 
     if context_summary and context_summary != "No recent conversations found.":
-        parts.append(f"\nWhat Dom has been focused on recently (use to inform section priorities):\n{context_summary}")
+        parts.append(f"\nEDITION CONTEXT — use Dom's recent focus to inform section priorities:\n{context_summary}")
 
     parts.append(f"\n{hermes_task if hermes_task is not None else _HERMES_TASK}")
 
@@ -671,10 +698,10 @@ async def run_newsletter_generation(
 ) -> str:
     """
     Full newsletter generation pipeline.
-    is_sample=True: draft from existing DB data, skip Beehiiv push, label as sample.
+    is_sample=True: draft from existing DB data and label as sample.
     brief: optional Dom-specified angle/topic to prioritise.
     notify_start=False: skip the opening Telegram ping (use when the caller already confirmed to Dom).
-    Returns the Beehiiv post ID (or empty string on failure / sample run).
+    Returns the stored newsletter issue ID, or an empty string on failure.
     """
     from db.queries import (
         is_newsletter_paused,
@@ -687,7 +714,6 @@ async def run_newsletter_generation(
     from agents.research_agent import identify_weekly_topics, research_all_topics
     from agents.visual_agent import generate_newsletter_visuals
     from newsletter.builder import build_newsletter_html, build_plain_text
-    from newsletter.beehiiv import push_to_beehiiv_draft, update_beehiiv_draft
     from training.style_analyser import get_style_bible_for_prompt
     from memory.feedback import get_all_active_feedback
     from memory.conversation import get_all_context_summary
@@ -1239,7 +1265,7 @@ async def run_newsletter_generation(
                     f"The '{sec_id}' section scored {avg:.1f}/10 for Elena-likeness — too low. "
                     f"Rewrite ONLY the '{sec_id}' section. You MUST apply all three Elena techniques:\n"
                     f"1. RELATABLE HOOK: If this is the opening section, the first sentence must be a universal human frame, not a data point.\n"
-                    f"2. FLAT REACTION LINES: Every paragraph needs one 3-7 word bone-dry reaction as its own sentence. "
+                    f"2. FLAT REACTION LINES: Use one or two 3-7 word bone-dry reactions in the story, each as its own sentence and no more than one per paragraph. "
                     f"Examples: 'Dream big, I guess.' / 'This did not inspire confidence.' / 'Completely normal behaviour.' / 'And yet.'\n"
                     f"3. STORY WALK: Narrate events in sequence, reacting as you go. Do not front-load the conclusion.\n"
                     f"Return the full JSON object as before.{flagged_note}"
@@ -1378,41 +1404,7 @@ async def run_newsletter_generation(
             "review_summary": {"text": review_summary},
         })
 
-        # ── Step 9: Push to Beehiiv as draft (skip for sample runs) ──────────
-        beehiiv_post_id = ""
-        beehiiv_url = ""
-        if is_sample:
-            logger.info("Sample run — skipping Beehiiv push")
-        else:
-            existing_post_id = existing_issue.get("beehiiv_post_id", "") if existing_issue else ""
-            if existing_post_id:
-                logger.info("Updating existing Beehiiv draft %s", existing_post_id)
-                beehiiv_result = await update_beehiiv_draft(
-                    existing_post_id,
-                    html_content,
-                    subject_line,
-                    preview_text,
-                )
-                beehiiv_post_id = existing_post_id if beehiiv_result.get("success") else ""
-                beehiiv_url = beehiiv_result.get("web_url", "")
-            else:
-                logger.info("Pushing new draft to Beehiiv")
-                beehiiv_result = await push_to_beehiiv_draft(
-                    html_content,
-                    subject_line,
-                    preview_text,
-                    issue_number,
-                )
-                beehiiv_post_id = beehiiv_result.get("post_id", "")
-                beehiiv_url = beehiiv_result.get("url", "")
-
-            if beehiiv_post_id:
-                update_newsletter_issue(issue_id, {
-                    "beehiiv_post_id": beehiiv_post_id,
-                    "beehiiv_url": beehiiv_url,
-                })
-
-        # ── Step 10: Send to Dom via Telegram ─────────────────────────────────
+        # ── Step 9: Send the stored draft to Dom via Telegram ─────────────────
         logger.info("Sending newsletter draft to Dom via Telegram")
         await _deliver_to_dom(
             issue_number=issue_number,
@@ -1421,8 +1413,6 @@ async def run_newsletter_generation(
             plain_text=plain_text,
             html_content=html_content,
             visual_count=visual_count,
-            beehiiv_post_id=beehiiv_post_id,
-            beehiiv_url=beehiiv_url,
             sources=sources,
             research_topics=topics,
             review_summary=review_summary,
@@ -1439,8 +1429,8 @@ async def run_newsletter_generation(
             await clear_topic_directives(edition_date.isoformat())
             logger.info("Topic directives cleared after successful generation")
 
-        logger.info(f"Newsletter generation complete. Issue #{issue_number}, post_id={beehiiv_post_id}")
-        return beehiiv_post_id
+        logger.info("Newsletter generation complete. Issue #%s, issue_id=%s", issue_number, issue_id)
+        return issue_id
 
     except json.JSONDecodeError as e:
         error_msg = f"Newsletter writer returned invalid JSON: {e}. Raw output:\n{raw_output[:500]}"
@@ -1466,8 +1456,6 @@ async def _deliver_to_dom(
     plain_text: str,
     html_content: str,
     visual_count: int,
-    beehiiv_post_id: str,
-    beehiiv_url: str,
     sources: list = None,
     research_topics: list = None,
     review_summary: str = "",
@@ -1502,8 +1490,6 @@ async def _deliver_to_dom(
             plain_text=plain_text,
             html_content=html_content,
             visual_count=visual_count,
-            beehiiv_post_id=beehiiv_post_id,
-            beehiiv_url=beehiiv_url,
             sources=sources or [],
             research_topics=research_topics or [],
             review_summary=review_summary,
@@ -1542,7 +1528,7 @@ async def _deliver_to_dom(
         label = "SAMPLE draft" if is_sample else "Draft"
         await _send_telegram(
             f"{label} ready — Issue #{issue_number}.\nSubject: {subject_line}\n"
-            + (f"Beehiiv draft: {beehiiv_url}\nSend /approve to publish." if beehiiv_url else "Sample only — no Beehiiv push.")
+            "Open HERALD Newsletter Studio to review, edit, download, or approve it."
         )
 
 
@@ -1569,7 +1555,7 @@ async def run_newsletter_from_conversation_draft(
         preview_text: Email preview text (optional).
 
     Returns:
-        Beehiiv post ID on success, empty string on failure.
+        Stored newsletter issue ID on success, empty string on failure.
     """
     from db.queries import (
         insert_newsletter_issue,
@@ -1578,7 +1564,6 @@ async def run_newsletter_from_conversation_draft(
         set_pipeline_state,
     )
     from newsletter.builder import build_newsletter_html, build_plain_text
-    from newsletter.beehiiv import push_to_beehiiv_draft
 
     logger.info(
         "run_newsletter_from_conversation_draft: issue=%d subject=%r",
@@ -1649,21 +1634,6 @@ async def run_newsletter_from_conversation_draft(
             "status": "draft",
         })
 
-        # Push to Beehiiv as draft
-        beehiiv_post_id = ""
-        beehiiv_url = ""
-        beehiiv_result = await push_to_beehiiv_draft(
-            html_content, subject_line, preview_text, issue_number
-        )
-        beehiiv_post_id = beehiiv_result.get("post_id", "")
-        beehiiv_url = beehiiv_result.get("url", "")
-
-        if beehiiv_post_id:
-            update_newsletter_issue(issue_id, {
-                "beehiiv_post_id": beehiiv_post_id,
-                "beehiiv_url": beehiiv_url,
-            })
-
         # Deliver to Dom via Telegram with approval buttons
         await _deliver_to_dom(
             issue_number=issue_number,
@@ -1672,8 +1642,6 @@ async def run_newsletter_from_conversation_draft(
             plain_text=plain_text,
             html_content=html_content,
             visual_count=0,
-            beehiiv_post_id=beehiiv_post_id,
-            beehiiv_url=beehiiv_url,
             sources=[],
             research_topics=[],
             review_summary="Conversation draft — approved by Dom before pipeline submission.",
@@ -1681,11 +1649,11 @@ async def run_newsletter_from_conversation_draft(
         )
 
         logger.info(
-            "run_newsletter_from_conversation_draft: complete. issue=%d post_id=%s",
+            "run_newsletter_from_conversation_draft: complete. issue=%d issue_id=%s",
             issue_number,
-            beehiiv_post_id,
+            issue_id,
         )
-        return beehiiv_post_id
+        return issue_id
 
     except Exception as exc:
         logger.error(

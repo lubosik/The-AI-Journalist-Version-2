@@ -25,7 +25,7 @@ from datetime import datetime, timezone, timedelta
 logger = logging.getLogger(__name__)
 
 _PERMANENT_PIPELINE_KEYS = {
-    "paused", "newsletter_paused", "beehiiv_api_key", "beehiiv_publication_id",
+    "paused", "newsletter_paused",
     "last_newsletter_sent", "current_issue_number", "newsletter_edition_deals",
     "recent_x_search_queries", "awaiting_newsletter_edit",
 }

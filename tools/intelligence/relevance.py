@@ -7,22 +7,13 @@ from openai import OpenAI
 from dotenv import load_dotenv
 
 from config import MODELS, OPENROUTER_BASE_URL
+from intelligence.prompt_architecture import build_relevance_prompt
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-RELEVANCE_PROMPT = (
-    "Is the following content relevant to top-tier venture capital and tech news? "
-    "Relevant content includes: fundraises, cap table activity, secondary trades, rumors, or news about "
-    "Anthropic, OpenAI, SpaceX, Anduril, xAI, Stripe, Databricks, or companies of similar prominence; "
-    "the Musk vs Altman lawsuit; high-profile legal or regulatory actions involving named top-tier tech companies; "
-    "insider commentary from leading VCs or operators about these specific companies; "
-    "or pre-IPO secondary market activity at named prominent companies. "
-    "NOT relevant: generic private equity, mid-market buyouts, LBO financing, broad macro, "
-    "or any deal that does not involve a named top-tier venture-backed company. "
-    'Answer with JSON: {"relevant": true/false, "reason": "string", "score": 1-10}'
-)
+RELEVANCE_PROMPT = build_relevance_prompt()
 
 
 def _get_client() -> OpenAI:

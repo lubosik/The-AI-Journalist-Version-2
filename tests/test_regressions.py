@@ -87,6 +87,47 @@ class RegressionTests(unittest.TestCase):
             app.HeraldSQLAlchemyDataLayer._get_configured_user("unknown")
         )
 
+    def test_investment_case_requests_select_the_expected_research_mode(self):
+        from tools.intelligence.prompt_architecture import detect_research_mode
+
+        self.assertEqual(
+            detect_research_mode("Do deep research and build the bull case for Stripe"),
+            "bull",
+        )
+        self.assertEqual(
+            detect_research_mode("Stress test the bear case for this company"),
+            "bear",
+        )
+        self.assertEqual(
+            detect_research_mode("Underwrite both sides and give me a balanced view"),
+            "balanced",
+        )
+
+    def test_newsletter_footer_contains_mandatory_disclosure(self):
+        from tools.newsletter.sections import render_footer
+
+        footer = render_footer()
+        self.assertIn(
+            "This newsletter is for informational purposes only",
+            footer,
+        )
+        self.assertIn(
+            "Investing in private securities involves substantial risk",
+            footer,
+        )
+        self.assertNotIn("\u2014", footer)
+        self.assertNotIn("\u2013", footer)
+
+    def test_configured_users_share_one_workspace(self):
+        import app
+
+        dom = app.HeraldSQLAlchemyDataLayer._get_configured_user("dom")
+        admin = app.HeraldSQLAlchemyDataLayer._get_configured_user("lubosi")
+        self.assertEqual(
+            dom.metadata["workspace_id"],
+            admin.metadata["workspace_id"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

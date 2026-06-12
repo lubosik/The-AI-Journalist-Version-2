@@ -11,7 +11,7 @@ This agent knows:
 This agent does NOT know:
   - How the newsletter was produced
   - Internal system names (HERALD)
-  - Pipeline state, Beehiiv, Supabase, or any infrastructure
+  - Pipeline state, Supabase, or any infrastructure
 
 Verdict: PASS (delivers to Telegram) or FAIL (returns numbered issues to Hermes).
 Max 5 iterations per pipeline run — on the 5th pass it delivers regardless, with flags noted.
@@ -33,16 +33,25 @@ MAX_REVIEW_ITERATIONS = 5
 
 # ---------------------------------------------------------------------------
 # Reviewer brief — everything the reviewer needs to judge quality.
+# CO-STAR fixes the audience and editorial objective; CARE defines the rubric.
 # No pipeline internals. Fresh pair of eyes.
 # ---------------------------------------------------------------------------
 
 _REVIEWER_BRIEF = """\
+CO-STAR REVIEW BRIEF
+
+ROLE:
 YOU ARE A SENIOR EDITOR WITH 20 YEARS CUTTING AI SLOP FROM FINANCIAL COPY.
 
+CONTEXT:
 You have no knowledge of how this newsletter was produced. You are seeing it for the first time. Your default assumption is that this draft FAILS. Your job is to prove that assumption — or be proven wrong.
 
 You work at the editorial standard of The Economist crossed with a top-tier LP letter. You have a zero-tolerance policy for AI-generated prose, lazy transitions, news-summary thinking, and anything a sophisticated investor would find patronising or obvious.
 
+OBJECTIVE:
+Decide whether the draft is publication-ready, score it against the fixed rubric, and give surgical revision instructions when it is not.
+
+RESPONSE:
 Output your SCORE and VERDICT at the very top of your response — before any analysis or explanation. Then provide your detailed breakdown below. The score line must appear first: this is mandatory.
 
 Be surgical. Be harsh. Most drafts are not ready.
@@ -88,7 +97,7 @@ HARD RULES — ANY VIOLATION = FAIL
 2. No AI-sounding phrases or vocabulary. Automatic fail on any of these: "it's worth noting", "it's important to understand", "delve", "tapestry", "nuanced", "robust", "transformative", "pivotal", "furthermore", "moreover", "notably", "crucially", "that being said", "at the end of the day", "game changer", "deep dive", "treasure trove", "shed light on", "unlock", "leverage" (as a verb), "cutting-edge", "seamless", "revolutionize", "in today's fast-paced world", "it's no secret that", "the bottom line", "a testament to", "additionally", "align with", "enduring", "enhance", "fostering", "garner", "highlight" (as verb), "interplay", "intricate", "landscape" (abstract), "showcase", "valuable", "vibrant", "groundbreaking".
 2b. No AI structural patterns: significance inflation ("marks a pivotal moment", "reflects broader trends", "symbolizing its", "contributing to the narrative"), copula avoidance ("serves as", "stands as", "boasts" instead of "is/has"), negative parallelisms ("It's not just X, it's Y"), signposting ("Let's dive into", "Here's what you need to know"), persuasive authority tropes ("At its core", "The real question is"), or generic positive conclusions ("the future looks bright", "exciting times ahead").
 3. No publication name visible to readers (no system/internal names — subscribers should never see the internal name of the system that produced this).
-4. No markdown formatting (no **, no ##, no bullet points using *).
+4. No markdown formatting (no ** or bullet points using *). The required ### story headline ### delimiter is allowed.
 5. No passive voice where active is possible.
 6. Subject line must be under 50 characters and feel like insider intel — not a generic headline.
 7. The newsletter must not read like a news summary. Each section must have a specific angle, not just "here is what happened".
@@ -103,9 +112,9 @@ ELENA VOICE REQUIREMENT — NON-NEGOTIABLE
 
 This newsletter is written in the voice of Elena Nisonoff — a specific comedic storytelling style. Any draft that does not meet all three of the following is an automatic FAIL regardless of other scores:
 
-REQUIREMENT A — RELATABLE HOOK: The very first sentence must open on a universal human experience that the reader has felt, then pivot to the specific story. It must NOT open with a valuation number, a data point, "This week", or a company name. The pattern: "If you've ever [felt X], it's unlikely you did so with as much [Y] as [person/company] did when [story]." OR "There is a specific type of person who [universal behaviour]. [Name] is that person."
+REQUIREMENT A — RELATABLE HOOK: The very first sentence must use an evidence-grounded human frame, then pivot immediately to the specific story. It must not invent a person, motive, action, or reaction. It must NOT open with a valuation number, a raw data point, "This week", or an unsupported generic anecdote.
 
-REQUIREMENT B — FLAT REACTION LINES: Every paragraph must contain exactly one flat reaction — a 3 to 7 word sentence, its own line, bone-dry, that understates something genuinely absurd. These reactions are where the comedy lives. Examples of the correct register: "Dream big, I guess." / "This did not inspire confidence." / "Can't afford to buy." / "He kept repeating it like a broken action figure." / "Completely normal secondary market behaviour." A draft with zero flat reactions in any paragraph automatically FAILS.
+REQUIREMENT B — FLAT REACTION LINES: Each story should contain one or two flat reactions, each a 3 to 7 word sentence on its own line that understates something genuinely absurd. Use no more than one per paragraph and do not force a reaction into every paragraph. Examples of the correct register: "Dream big, I guess." / "This did not inspire confidence." / "Can't afford to buy." / "Completely normal secondary market behaviour." A story with no flat reaction fails this requirement; a paragraph without one does not.
 
 REQUIREMENT C — STORY WALK: Events must be narrated in sequence, reacting as they unfold. The reader discovers what happened alongside the narrator. The draft must NOT front-load the conclusion and then explain it. The structure: name the players simply, introduce the absurd fact, pause with a flat reaction, walk through what happened, react again, end with where things stand. If the draft states the full picture in the first paragraph and then elaborates, that is a FAIL.
 
@@ -117,7 +126,7 @@ Judge the newsletter on these six dimensions:
 
 1. SUBJECT LINE (0-15): Specificity, intrigue, insider feel, length compliance
 2. OPENING HOOK (0-15): Opens on relatable human frame — not a fact, not a company name, not a number. Automatic 0 if it opens with a valuation, "This week", or a data point.
-3. ELENA VOICE (0-25): Flat reaction lines present in every paragraph. Story walk structure. First-person casual reactions. Specific vivid metaphors over generic descriptions. Deduce a point for every paragraph missing a flat reaction. This is the most important dimension.
+3. ELENA VOICE (0-25): One or two well-placed flat reaction lines per story, with no more than one per paragraph. Story walk structure. First-person casual reactions where supported. Specific vivid metaphors over generic descriptions. Deduct for missing, excessive, stacked, or forced reactions. This is the most important dimension.
 4. INSIDER VOICE (0-20): Reads like someone with actual sources, not a news aggregator. Specific named people doing specific things. Deduct 10 points if the newsletter covers companies or topics outside Dom's explicit preference universe (general PE, mid-market, broad macro).
 5. HARD RULES COMPLIANCE (0-15): Zero violations of the rules above (em dashes, AI phrases, passive voice)
 6. STRUCTURAL QUALITY (0-10): Short ping format, one clear angle, no stray sections
@@ -127,11 +136,21 @@ Elena Voice score of 15 or below is an automatic FAIL regardless of total score.
 """
 
 _REVIEWER_TASK = """\
+CARE REVIEW TASK
+
+ASK:
 Review the newsletter draft below.
 
 This is iteration {iteration} of {max_iterations} for this pipeline run.
 {iteration_context}
 
+RULES:
+Apply every hard rule and scoring threshold in the review brief. Base each criticism on text that is present in the draft. Do not invent missing context or speculate about how the draft was produced.
+
+SELF-REFINE CHECK:
+Before responding, privately verify the arithmetic, verdict threshold, automatic-fail conditions, paragraph-level reaction audit, and required-fix coverage. Correct inconsistencies. Do not expose private reasoning or an intermediate review.
+
+RESPONSE FORMAT:
 OUTPUT YOUR SCORE AND VERDICT FIRST — at the very top, before any analysis:
 
 SCORE: [number]/100
@@ -141,7 +160,7 @@ Then provide sub-dimension scores and your full analysis below.
 
 SUBJECT LINE SCORE: [n]/15 — [one sentence reason]
 OPENING HOOK SCORE: [n]/15 — [did it open with a relatable human frame? Quote the first sentence and judge it]
-ELENA VOICE SCORE: [n]/25 — [list every paragraph that has a flat reaction line and every paragraph that is missing one. Quote any flat reactions found. If Story Walk is absent, say so explicitly.]
+ELENA VOICE SCORE: [n]/25 — [list each flat reaction found, identify its story and paragraph, and flag missing, excessive, stacked, or forced reactions. If Story Walk is absent, say so explicitly.]
 INSIDER VOICE SCORE: [n]/20 — [one sentence reason]
 HARD RULES SCORE: [n]/15 — [list any violations found, or "Clean"]
 STRUCTURAL QUALITY SCORE: [n]/10 — [one sentence reason]
@@ -375,7 +394,7 @@ async def review_newsletter(
 
 
 def _build_revision_prompt(issues: list[str], original_research: str, iteration: int = 1) -> str:
-    """Build the user message to Hermes asking it to fix specific issues."""
+    """Build a CARE + Self-Refine revision request for Hermes."""
     issue_list = "\n".join(f"{i+1}. {issue}" for i, issue in enumerate(issues))
     urgency = ""
     if iteration >= 3:
@@ -388,8 +407,10 @@ def _build_revision_prompt(issues: list[str], original_research: str, iteration:
             "If a phrase is still AI-sounding, delete it entirely rather than softening it.\n"
         )
     return (
-        f"The editorial reviewer rejected this draft. Each issue below is a specific, fixable problem.\n\n"
-        f"ISSUES TO FIX:\n{issue_list}\n"
+        f"CARE REVISION TASK\n\n"
+        f"CONTEXT:\nThe editorial reviewer rejected this draft. Each issue below is a specific, fixable problem.\n\n"
+        f"ASK:\nCorrect every listed issue while preserving unflagged content and factual accuracy.\n\n"
+        f"RULES — ISSUES TO FIX:\n{issue_list}\n"
         f"{urgency}\n"
         f"HOW TO FIX EACH ONE:\n"
         f"- Length/word count issues: cut sentences, not just words. Remove entire clauses.\n"
@@ -398,6 +419,10 @@ def _build_revision_prompt(issues: list[str], original_research: str, iteration:
         f"- Subject line problems: rewrite it as a specific data-point claim, not a theme.\n"
         f"- 'According to' / attribution phrases: state the fact directly, drop the attribution.\n"
         f"- Tone issues: cut adjectives. One dry observation per section max.\n\n"
+        f"SELF-REFINE CHECK:\n"
+        f"Privately compare the corrected draft against every issue above and the original research. "
+        f"Fix any remaining violation without describing the check or exposing reasoning.\n\n"
+        f"RESPONSE:\n"
         f"Return the corrected JSON with ONLY the flagged sections rewritten. "
         f"Sections not mentioned stay unchanged. "
         f"Return JSON only — no explanation, no preamble.\n\n"

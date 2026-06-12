@@ -16,8 +16,6 @@ async def send_newsletter_draft_preview(
     plain_text: str,
     html_content: str,
     visual_count: int,
-    beehiiv_post_id: str,
-    beehiiv_url: str,
     sources: list | None = None,
     research_topics: list | None = None,
     review_summary: str = "",
@@ -46,7 +44,7 @@ async def send_newsletter_draft_preview(
     if plain_text:
         snippet = plain_text.strip()[:1500]
         if len(plain_text.strip()) > 1500:
-            snippet += "\n\n[...continued — full draft on Beehiiv]"
+            snippet += "\n\n[...continued in the attached draft and Newsletter Studio]"
         await bot.send_message(chat_id=chat_id, text=snippet)
 
     # --- Plain text file attachment ---
@@ -62,9 +60,5 @@ async def send_newsletter_draft_preview(
     except Exception as e:
         logger.warning("Could not attach draft file: %s", e)
 
-    # --- Footer with Beehiiv link ---
-    if beehiiv_url:
-        footer = f"Beehiiv draft: {beehiiv_url}\n\nReply with any feedback, or send /approve to publish."
-    else:
-        footer = "No Beehiiv draft yet (403 plan limit). Review the text above and reply with feedback."
+    footer = "Review the draft in HERALD Newsletter Studio. Reply with feedback or approve it inside the platform."
     await bot.send_message(chat_id=chat_id, text=footer)

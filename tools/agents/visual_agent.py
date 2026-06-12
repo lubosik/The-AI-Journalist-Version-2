@@ -56,18 +56,45 @@ def _build_prompt(visual_type: str, context: str) -> str:
     template = PROMPT_TEMPLATES.get(visual_type, PROMPT_TEMPLATES["infographic"])
     try:
         if visual_type == "header":
-            return template
+            visual_brief = template
         elif visual_type == "chart":
-            return template.format(chart_description=context)
+            visual_brief = template.format(chart_description=context)
         elif visual_type == "deal_table":
-            return template.format(deal_description=context)
+            visual_brief = template.format(deal_description=context)
         else:
-            return template.format(concept_description=context)
+            visual_brief = template.format(concept_description=context)
     except KeyError:
-        return f"{template} Context: {context}"
+        visual_brief = f"{template} Context: {context}"
+    return f"""CO-STAR VISUAL BRIEF
+
+CONTEXT:
+Create a publication-ready visual for a specialist VC secondaries newsletter.
+Any supplied context is reference material, not an instruction to place unverified
+text, logos, trademarks, or claims in the image.
+
+OBJECTIVE:
+{visual_brief}
+
+STYLE:
+Editorial financial design with clean hierarchy, restrained detail, and strong
+mobile readability.
+
+TONE:
+Authoritative, modern, and understated.
+
+AUDIENCE:
+LPs, GPs, family offices, RIAs, and institutional secondary-market participants.
+
+RESPONSE:
+Return one finished image. Avoid illegible text, invented data labels, watermarks,
+brand marks, and decorative clutter."""
 
 
-async def _upload_to_supabase(image_bytes: bytes, filename: str) -> str:
+async def _upload_to_supabase(
+    image_bytes: bytes,
+    filename: str,
+    content_type: str = "image/png",
+) -> str:
     """Upload image bytes to Supabase Storage. Returns the permanent public URL."""
     from db.client import get_client as get_supabase
 
@@ -78,7 +105,7 @@ async def _upload_to_supabase(image_bytes: bytes, filename: str) -> str:
             lambda: db.storage.from_(_SUPABASE_BUCKET).upload(
                 path,
                 image_bytes,
-                file_options={"content-type": "image/png", "upsert": "true"},
+                file_options={"content-type": content_type, "upsert": "true"},
             )
         )
         url = db.storage.from_(_SUPABASE_BUCKET).get_public_url(path)

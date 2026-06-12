@@ -22,22 +22,16 @@ from processing.dedup import generate_content_hash, is_duplicate
 from processing.embedder import embed_and_store_chunks, embed_texts
 from processing.tagger import generate_tags
 from intelligence.relevance import check_relevance
+from intelligence.prompt_architecture import (
+    build_editor_summary_prompt,
+    build_research_system_prompt,
+)
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-WEB_RESEARCH_SYSTEM_PROMPT = (
-    "You are a research assistant for a top-tier venture capital and tech intelligence newsletter. "
-    "Search for current, specific, factual information about the given query. "
-    "Only use information from the last 48 hours unless it is clearly labelled as background. "
-    "Prioritise specific, human, anecdotal stories only when they are new. Do not repeat older viral anecdotes. "
-    "Focus on: Anthropic, OpenAI, SpaceX, Anduril, xAI, Stripe, Databricks and peers; "
-    "fundraises, cap table moves, pre-IPO secondary trades, rumors, the Musk vs Altman lawsuit, and insider commentary from top VCs. "
-    "Never reuse the Storm Duncan/Bay Area estate/Anthropic-home-payment anecdote unless the query provides a new update from the last 48 hours. "
-    "Do NOT surface generic PE, mid-market buyouts, or content unrelated to named prominent tech companies. "
-    "Return findings with source citations."
-)
+WEB_RESEARCH_SYSTEM_PROMPT = build_research_system_prompt(deep=False)
 
 
 def _upcoming_friday_iso() -> str:
@@ -97,13 +91,7 @@ async def summarize_research_for_editors(query: str, findings: str) -> dict:
             model=MODELS["fast"],
             messages=[{
                 "role": "user",
-                "content": (
-                    "Summarize this research for two newsletter editors. Return JSON only: "
-                    "{\"summary\":\"max 80 words\",\"key_facts\":[\"3 concrete facts\"],"
-                    "\"interesting_notes\":[\"1-2 editorial notes\"]}. "
-                    "Preserve names, numbers, and dates.\n\n"
-                    f"Query: {query}\n\nFindings:\n{findings[:5000]}"
-                ),
+                "content": build_editor_summary_prompt(query, findings),
             }],
             temperature=0,
             max_tokens=600,
@@ -194,7 +182,7 @@ async def web_research(query: str, deep: bool = False) -> dict:
             client.chat.completions.create,
             model=model,
             messages=[
-                {"role": "system", "content": WEB_RESEARCH_SYSTEM_PROMPT},
+                {"role": "system", "content": build_research_system_prompt(deep=deep)},
                 {"role": "user", "content": query},
             ],
         )
@@ -1166,19 +1154,12 @@ async def add_youtube_video(url: str) -> dict:
 
 
 async def get_newsletter_analytics() -> dict:
-    """Fetch Beehiiv newsletter performance data for the agent."""
-    try:
-        from newsletter.beehiiv import get_publication_overview
-        from newsletter.performance import format_performance_for_telegram
-        overview = await get_publication_overview()
-        return {
-            "success": overview.get("success", False),
-            "summary": format_performance_for_telegram(overview),
-            "raw": overview,
-        }
-    except Exception as e:
-        logger.error(f"get_newsletter_analytics error: {e}")
-        return {"success": False, "summary": "Analytics hit an error — check the logs.", "raw": {}}
+    """Report the current native analytics capability."""
+    return {
+        "success": False,
+        "summary": "Native HERALD newsletter analytics are not configured yet.",
+        "raw": {},
+    }
 
 
 async def search_youtube_channel_for_topic(
@@ -1455,8 +1436,8 @@ async def send_approved_draft_to_pipeline(
 
     Call this when Dom has finished collaboratively drafting an issue via Telegram
     conversation and has approved the final content. This skips ALL automated
-    generation (no web research, no Hermes LLM, no voice scoring) and sends
-    the exact approved text to Beehiiv + Dom for final Approve/Decline.
+    generation (no web research, no Hermes LLM, no voice scoring), stores
+    the exact approved text in HERALD, and sends Dom a review preview.
 
     Args:
         draft_text:   Full approved plain-text content. Use "\\n---\\n" lines to
@@ -1466,36 +1447,36 @@ async def send_approved_draft_to_pipeline(
         preview_text: Email preview text.
 
     Returns:
-        {"success": bool, "beehiiv_post_id": str, "note": str}
+        {"success": bool, "issue_id": str, "note": str}
     """
     try:
         from agents.orchestrator import run_newsletter_from_conversation_draft
-        post_id = await run_newsletter_from_conversation_draft(
+        issue_id = await run_newsletter_from_conversation_draft(
             draft_text=draft_text,
             issue_number=issue_number,
             subject_line=subject_line,
             preview_text=preview_text,
         )
-        if post_id:
+        if issue_id:
             return {
                 "success": True,
-                "beehiiv_post_id": post_id,
+                "issue_id": issue_id,
                 "note": (
-                    f"Issue #{issue_number} built from conversation draft and pushed to Beehiiv. "
-                    "Sent to Dom for final approve/decline."
+                    f"Issue #{issue_number} built from conversation draft and stored in HERALD. "
+                    "Sent to Dom for review."
                 ),
             }
         else:
             return {
                 "success": False,
-                "beehiiv_post_id": "",
-                "note": "Pipeline completed but Beehiiv push returned no post ID — check logs.",
+                "issue_id": "",
+                "note": "Pipeline did not return a stored issue ID. Check logs.",
             }
     except Exception as exc:
         logger.error("send_approved_draft_to_pipeline error: %s", exc, exc_info=True)
         return {
             "success": False,
-            "beehiiv_post_id": "",
+            "issue_id": "",
             "note": f"Pipeline error: {str(exc)[:200]}",
         }
 
@@ -1663,8 +1644,6 @@ async def resend_draft_preview() -> dict:
             plain_text=issue.get("plain_text", ""),
             html_content=issue.get("html_content", ""),
             visual_count=3,
-            beehiiv_post_id=issue.get("beehiiv_post_id", ""),
-            beehiiv_url=issue.get("beehiiv_url", ""),
             sources=issue.get("sources", []),
             research_topics=issue.get("research_topics", []),
             review_summary=issue.get("review_summary", ""),
