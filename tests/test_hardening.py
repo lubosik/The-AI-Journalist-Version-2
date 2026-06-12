@@ -195,6 +195,16 @@ class TestProductionReliability(unittest.TestCase):
     def test_supabase_data_layer_fallback_exists(self):
         self.assertTrue(hasattr(self.app, "HeraldSupabaseDataLayer"))
 
+    def test_supabase_persistence_takes_precedence(self):
+        source = Path("app.py").read_text()
+        data_layer = source.split("@cl.data_layer", 1)[1].split(
+            "async def _get_collaboration_context", 1
+        )[0]
+        self.assertLess(
+            data_layer.index('os.getenv("SUPABASE_URL")'),
+            data_layer.index("if _db_uri"),
+        )
+
     def test_pipeline_performance_import_is_optional(self):
         source = Path("tools/agents/orchestrator.py").read_text()
         self.assertIn("Newsletter performance analytics unavailable", source)

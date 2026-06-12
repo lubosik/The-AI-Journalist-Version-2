@@ -815,8 +815,6 @@ class HeraldSupabaseDataLayer(BaseDataLayer):
 
 @cl.data_layer
 def get_data_layer():
-    if os.getenv("HERALD_DATA_LAYER", "supabase").lower() == "sql" and _db_uri:
-        return HeraldSQLAlchemyDataLayer(conninfo=_db_uri, connect_args=_db_connect_args)
     if os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_KEY"):
         return HeraldSupabaseDataLayer()
     if _db_uri:
